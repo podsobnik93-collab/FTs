@@ -1,0 +1,188 @@
+(function(){'use strict';
+var aiGoal='loss',aiLevel='новичок',aiEquip=['зал'],aiChatHistory=[],chatReady=false;
+
+window.aiSwitchTab=function(t){
+  ['plan','chat','key'].forEach(function(x){
+    var p=document.getElementById('ai-pane-'+x),b=document.getElementById('ai-tab-'+x);
+    if(p)p.style.display=(x===t)?'':'none';
+    if(b)b.className='ai-tab'+(x===t?' ai-tab-active':'');
+  });
+  if(t==='chat'&&!chatReady){chatReady=true;appendMsg('ai','Привет! 👋 Я ИИ-тренер на базе Groq (бесплатно). Добавь ключ на вкладке 🔑, и я отвечу умно. Или спрашивай — работаю и без ключа!');}
+  if(t==='key'){var k=localStorage.getItem('fs-groq-key')||'',s=document.getElementById('ai-key-status');if(s)s.textContent=k?'✅ Ключ Groq установлен — ИИ активен':'⚠️ Ключ не установлен — офлайн-режим';}
+};
+
+window.aiSetGoal=function(v,b){aiGoal=v;['ai-goal-loss','ai-goal-gain','ai-goal-tone'].forEach(function(id){var e=document.getElementById(id);if(e)e.className='ai-chip'+(e===b?' ai-chip-active':'');});};
+window.aiSetLevel=function(v,b){aiLevel=v;['ai-lvl-beg','ai-lvl-mid','ai-lvl-adv'].forEach(function(id){var e=document.getElementById(id);if(e)e.className='ai-chip'+(e===b?' ai-chip-active':'');});};
+window.aiToggleEquip=function(v,b){var i=aiEquip.indexOf(v);if(i>=0){aiEquip.splice(i,1);b.className='ai-chip';}else{aiEquip.push(v);b.className='ai-chip ai-chip-active';}};
+
+window.aiSaveKey=function(){
+  var inp=document.getElementById('ai-key-input'),k=inp?inp.value.trim():'',s=document.getElementById('ai-key-status');
+  if(k){
+    localStorage.setItem('fs-groq-key',k);
+    if(inp){inp.value='';inp.placeholder='gsk_***** (сохранён)';}
+    if(s)s.textContent='✅ Ключ Groq сохранён — ИИ активен!';
+    if(typeof toast==='function')toast('✅ Groq API ключ сохранён');
+  }else{
+    localStorage.removeItem('fs-groq-key');
+    if(s)s.textContent='⚠️ Ключ удалён — офлайн-режим';
+  }
+};
+
+window.aiGeneratePlan=async function(){
+  var days=parseInt((document.getElementById('ai-days-slider')||{value:3}).value);
+  var dur=parseInt((document.getElementById('ai-dur-slider')||{value:45}).value);
+  var restr=(document.getElementById('ai-restrictions')||{value:''}).value.trim();
+  var gm={loss:'похудение',gain:'набор массы',tone:'тонус'},gl=gm[aiGoal]||'тонус';
+  var gb=document.getElementById('ai-gen-btn'),ld=document.getElementById('ai-plan-loading'),res=document.getElementById('ai-plan-result');
+  if(gb)gb.style.display='none';if(ld)ld.style.display='';if(res)res.innerHTML='';
+  var plan=null;
+  try{
+    var key=localStorage.getItem('fs-groq-key')||'';
+    if(key){
+      var sys='Ты опытный персональный фитнес-тренер. Говоришь ТОЛЬКО на русском, обращаешься на "ты". Отвечаешь СТРОГО на темы фитнеса. Возвращаешь ТОЛЬКО валидный JSON без markdown-блоков: {"title":"...","goal":"...","weeks":[{"weekNumber":1,"theme":"...","days":[{"dayNumber":1,"name":"...","type":"силовая","duration":45,"caloriesBurned":300,"exercises":[{"name":"...","sets":3,"reps":"12","rest":"60 сек","notes":""}]}]}]}';
+      var usr='Составь 4-недельный план:\n- Цель: '+gl+'\n- Уровень: '+aiLevel+'\n- Дней в неделю: '+days+'\n- Оборудование: '+(aiEquip.join(', ')||'вес тела')+'\n- Длительность: '+dur+' мин'+(restr?'\n- Ограничения: '+restr:'')+'\nВерни ТОЛЬКО JSON, без пояснений.';
+      var reply=await callGroq(key,sys,[{role:'user',content:usr}],3000);
+      var m=reply.match(/\{[\s\S]*\}/);
+      if(m)plan=JSON.parse(m[0]);
+    }
+  }catch(e){console.warn('Groq error:',e.message);}
+  if(!plan)plan=makeFallback(gl,aiLevel,days,dur);
+  if(gb)gb.style.display='';if(ld)ld.style.display='none';
+  renderPlan(plan);
+};
+
+function makeFallback(goal,level,days,dur){
+  var ex={
+    'похудение':[{name:'Приседания',sets:3,reps:'15',rest:'45 сек'},{name:'Отжимания',sets:3,reps:'12',rest:'45 сек'},{name:'Берпи',sets:3,reps:'10',rest:'60 сек'},{name:'Планка',sets:3,reps:'40 сек',rest:'30 сек'},{name:'Выпады',sets:3,reps:'12',rest:'45 сек'},{name:'Скалолаз',sets:3,reps:'30 сек',rest:'30 сек'}],
+    'набор массы':[{name:'Жим лёжа',sets:4,reps:'8',rest:'90 сек'},{name:'Приседания со штангой',sets:4,reps:'6',rest:'120 сек'},{name:'Тяга в наклоне',sets:4,reps:'8',rest:'90 сек'},{name:'Жим стоя',sets:3,reps:'10',rest:'75 сек'},{name:'Подтягивания',sets:3,reps:'8',rest:'90 сек'},{name:'Становая тяга',sets:3,reps:'6',rest:'120 сек'}],
+    'тонус':[{name:'Приседания с гантелями',sets:3,reps:'12',rest:'60 сек'},{name:'Жим гантелей лёжа',sets:3,reps:'12',rest:'60 сек'},{name:'Тяга гантелей',sets:3,reps:'12',rest:'60 сек'},{name:'Жим гантелей стоя',sets:3,reps:'12',rest:'60 сек'},{name:'Румынская тяга',sets:3,reps:'12',rest:'60 сек'},{name:'Планка',sets:3,reps:'40 сек',rest:'30 сек'}]
+  };
+  var exList=ex[goal]||ex['тонус'];
+  var themes=['Базовая нагрузка','Прогрессия','Интенсификация','Закрепление'];
+  var kcal=goal==='набор массы'?350:280;
+  var dNames=['Верх тела','Низ тела','Full body','Кардио','Верх+Кор','Функционал','Full body'];
+  var weeks=[];
+  for(var w=0;w<4;w++){
+    var dl=[];
+    for(var d=0;d<7;d++){
+      if(d<days){
+        var s=(d*2)%exList.length,exs=[];
+        for(var i=0;i<4;i++)exs.push(exList[(s+i)%exList.length]);
+        dl.push({dayNumber:d+1,name:'День '+(d+1)+' — '+(dNames[d]||'Тренировка'),type:'силовая',duration:dur,caloriesBurned:kcal+(w*15),exercises:exs});
+      }else{
+        dl.push({dayNumber:d+1,name:'День '+(d+1)+' — Отдых',type:'отдых',duration:0,caloriesBurned:0,exercises:[]});
+      }
+    }
+    weeks.push({weekNumber:w+1,theme:themes[w],days:dl});
+  }
+  return{title:'4-недельный план: '+goal,goal:goal,weeks:weeks};
+}
+
+function renderPlan(plan){
+  var el=document.getElementById('ai-plan-result');if(!el)return;
+  window._aiLastPlan=plan;
+  var h='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px;">'
+    +'<b style="font-size:0.95rem;">'+(plan.title||'4-недельный план')+'</b>'
+    +'<button onclick="aiSavePlan()" style="padding:6px 14px;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);border-radius:10px;color:var(--text);font-size:0.75rem;font-weight:700;cursor:pointer;">💾 Сохранить</button>'
+    +'</div>';
+  plan.weeks.forEach(function(wk){
+    h+='<div class="ai-week-card"><div class="ai-week-title">📅 Неделя '+wk.weekNumber+' — '+wk.theme+'</div>';
+    (wk.days||[]).forEach(function(day){
+      var r=day.type==='отдых';
+      h+='<div class="ai-day-card"><div class="ai-day-header">'
+        +'<span>'+(r?'😴':'💪')+' '+day.name+'</span>'
+        +(!r?'<span style="color:var(--text-light);font-size:0.72rem;">'+day.duration+'мин · '+day.caloriesBurned+'ккал</span>':'')
+        +'</div>';
+      if(!r&&day.exercises&&day.exercises.length){
+        day.exercises.forEach(function(ex){
+          h+='<div class="ai-ex-row"><span style="font-weight:600;flex:1;">'+ex.name+'</span>'
+            +'<span style="color:var(--text-light);white-space:nowrap;">'+ex.sets+'×'+ex.reps+' · '+ex.rest+'</span></div>';
+        });
+      }else if(r){h+='<div style="font-size:0.78rem;color:var(--text-light);">Отдых или лёгкая прогулка</div>';}
+      h+='</div>';
+    });
+    h+='</div>';
+  });
+  el.innerHTML=h;
+}
+
+window.aiSavePlan=function(){
+  if(!window._aiLastPlan)return;
+  try{
+    var s=JSON.parse(localStorage.getItem('fs-ai-plans')||'[]');
+    s.unshift({id:Date.now(),name:window._aiLastPlan.title||'ИИ-план',date:new Date().toLocaleDateString('ru-RU'),plan:window._aiLastPlan});
+    localStorage.setItem('fs-ai-plans',JSON.stringify(s.slice(0,10)));
+    if(typeof toast==='function')toast('💾 План сохранён!');
+  }catch(e){}
+};
+
+window.aiSendQuick=function(t){var inp=document.getElementById('ai-chat-input');if(inp)inp.value=t;window.aiSendMessage();};
+
+window.aiSendMessage=async function(){
+  var inp=document.getElementById('ai-chat-input'),text=inp?inp.value.trim():'';
+  if(!text)return;if(inp)inp.value='';
+  appendMsg('user',text);
+  aiChatHistory.push({role:'user',content:text});
+  var tid='ty-'+Date.now();appendTyping(tid);
+  var reply='';
+  try{
+    var key=localStorage.getItem('fs-groq-key')||'';
+    if(key){
+      var sys='Ты опытный фитнес-тренер. Говоришь ТОЛЬКО на русском, обращаешься на "ты". Отвечаешь ТОЛЬКО на вопросы о фитнесе, тренировках, питании и восстановлении. Ответы краткие и практичные.';
+      reply=await callGroq(key,sys,aiChatHistory.slice(-8),700);
+    }else{
+      reply=getFallback(text);
+    }
+  }catch(e){reply=getFallback(text);}
+  removeTyping(tid);
+  appendMsg('ai',reply);
+  aiChatHistory.push({role:'assistant',content:reply});
+};
+
+function getFallback(t){
+  t=t.toLowerCase();
+  if(t.includes('совет')||t.includes('сегодня'))return 'Совет дня: не пропускай разминку! 5-10 мин лёгкого кардио + динамическая растяжка снизят риск травм и улучшат результат. 💪';
+  if(t.includes('восстановл'))return 'Для восстановления: 🛏 сон 7-9 часов, 💧 вода 30мл/кг, 🍗 белок в течение 30 мин после тренировки, 🧘 лёгкая растяжка.';
+  if(t.includes('до тренировки')||t.includes('съесть')||t.includes('питание'))return 'За 1.5-2 часа: сложные углеводы + белок (гречка с курицей, овсянка с яйцами). За 30 мин — банан или горсть орехов. ✅';
+  if(t.includes('похудет'))return 'Для похудения: дефицит 300-500 ккал/день + силовые 3x/нед + кардио 2-3x. Без жёстких диет — просто считай КБЖУ! 📊';
+  if(t.includes('белок')||t.includes('протеин'))return 'Норма: 1.6-2.2 г/кг веса в день. Источники: курица, яйца, творог, рыба, бобовые. Протеин — по желанию.';
+  if(t.includes('сон'))return 'Сон — важнейший элемент прогресса. Мышцы растут во сне! Цель: 7-9 часов, ложись до 23:00, тёмная комната. 😴';
+  return '💡 Добавь Groq API ключ на вкладке 🔑 — я отвечу развёрнуто! Groq бесплатный и работает из России.\n\nСейчас в офлайн-режиме. Спроси о тренировках, питании или восстановлении!';
+}
+
+function appendMsg(role,text){
+  var msgs=document.getElementById('ai-chat-msgs');if(!msgs)return;
+  var w=document.createElement('div');
+  w.style.cssText='display:flex;'+(role==='user'?'justify-content:flex-end;':'justify-content:flex-start;');
+  var b=document.createElement('div');
+  b.className='ai-bubble ai-bubble-'+role;
+  b.innerHTML=esc(text).replace(/\n/g,'<br>');
+  w.appendChild(b);msgs.appendChild(w);msgs.scrollTop=msgs.scrollHeight;
+}
+function appendTyping(id){
+  var msgs=document.getElementById('ai-chat-msgs');if(!msgs)return;
+  var w=document.createElement('div');w.id=id;
+  w.style.cssText='display:flex;justify-content:flex-start;';
+  w.innerHTML='<div class="ai-typing"><span></span><span></span><span></span></div>';
+  msgs.appendChild(w);msgs.scrollTop=msgs.scrollHeight;
+}
+function removeTyping(id){var e=document.getElementById(id);if(e)e.remove();}
+function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+
+async function callGroq(key,sys,msgs,maxTok){
+  var r=await fetch('https://api.groq.com/openai/v1/chat/completions',{
+    method:'POST',
+    headers:{'Content-Type':'application/json','Authorization':'Bearer '+key},
+    body:JSON.stringify({
+      model:'llama-3.1-8b-instant',
+      messages:[{role:'system',content:sys}].concat(msgs),
+      max_tokens:maxTok,
+      temperature:0.7
+    }),
+    signal:AbortSignal.timeout(30000)
+  });
+  if(!r.ok){var err=await r.json().catch(function(){return{};});throw new Error('Groq '+(err.error&&err.error.message||r.status));}
+  var d=await r.json();
+  return(d.choices&&d.choices[0]&&d.choices[0].message&&d.choices[0].message.content)||'';
+}
+})();
