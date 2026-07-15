@@ -1,0 +1,2438 @@
+// pages.js — Исправленная версия (календарь объединён, дубликат удалён)
+// FIX: добавлены уникальные id тренировкам, обновление календаря после удаления,
+//      редактирование и удаление по id
+// FIX: убраны кнопки добавления тренировки из календаря, скрыта CTA-кнопка на календаре
+
+// ==================== НАВИГАЦИЯ ====================
+const PAGE_IDS = ['home','nutrition','stats','diary','profile','simulation','workout','calendar','ai','encyclopedia'];
+const NAV_IDS  = ['nav-home','nav-workout','nav-ai-btn','nav-nutrition','nav-calendar'];
+const CTA_LABELS = {
+  home:'Начать тренировку',
+  calendar:'+ Добавить тренировку',
+  nutrition:'+ Добавить приём пищи',
+  workout:'Сохранить тренировку',
+  stats:'Обновить данные',
+  diary:'+ Замеры тела',
+  profile:'Сохранить профиль',
+  simulation:'Рассчитать'
+};
+let currentPage = 'home';
+
+function updateCtaLabel(){
+  const btn = document.getElementById('cta-btn');
+  if(!btn) return;
+  const cta = document.querySelector('.bottom-cta');
+  // Скрываем на страницах, где кнопка не нужна
+  if(currentPage === 'nutrition' || currentPage === 'home' || currentPage === 'calendar' || currentPage === 'ai' || currentPage === 'diary' || currentPage === 'encyclopedia' || currentPage === 'profile'){
+    if(cta) cta.style.display = 'none';
+    return;
+  }
+  if(cta) cta.style.display = 'block';
+  if(currentPage === 'workout'){
+    if(currentWtScreen === 'home'){
+      if(cta) cta.style.display = 'none';
+      return;
+    }
+    if(currentWtScreen === 'execute' && Array.isArray(customWt) && customWt.length){
+      btn.textContent = '▶ Начать тренировку';
+    } else if(currentWtScreen === 'builder'){
+      if(Array.isArray(customWt) && customWt.length){
+        btn.textContent = '▶ Начать тренировку';
+      } else {
+        if(cta) cta.style.display = 'none';
+        return;
+      }
+    } else {
+      if(cta) cta.style.display = 'none';
+      return;
+    }
+    return;
+  }
+  btn.textContent = CTA_LABELS[currentPage] || 'Начать тренировку';
+}
+
+function goTo(id, title) {
+  if (currentPage === 'workout') saveWorkoutFlowState();
+  currentPage = id;
+
+  PAGE_IDS.forEach(p => {
+    const el = document.getElementById('page-'+p);
+    if (el) el.classList.toggle('active', p === id);
+  });
+
+  const NAV_MAP = {
+    home: 'nav-home',
+    workout: 'nav-workout',
+    ai: 'nav-ai-btn',
+    nutrition: 'nav-nutrition',
+    calendar: 'nav-calendar',
+  };
+  NAV_IDS.forEach(n => {
+    const el = document.getElementById(n);
+    if (el) el.classList.remove('active');
+  });
+  const activeNav = NAV_MAP[id];
+  if (activeNav) {
+    const el = document.getElementById(activeNav);
+    if (el) el.classList.add('active');
+  }
+
+  document.getElementById('header-title').textContent = title || 'FitSim';
+  updateCtaLabel();
+
+  if (id === 'stats') renderStats();
+  if (id === 'home') renderHome();
+  if (id === 'diary') { requestAnimationFrame(() => setTimeout(() => { renderBodyLog(); }, 50)); }
+  if (id === 'nutrition') { renderNutrEntries(); renderDietPrefs(); renderNutrQuickCard(); }
+  if (id === 'profile') { loadProfileToForm(); renderStats(); }
+  if (id === 'calendar') renderCalendar();
+  if (id === 'encyclopedia') { if (typeof renderEncyclopedia === 'function') renderEncyclopedia(); }
+  if (id === 'workout') {
+    const restored = restoreWorkoutFlowState();
+    if (restored && currentWtScreen === 'execute' && customWt.length) {
+      showWtScreen('execute');
+      renderExecute();
+    } else if (restored && currentWtScreen === 'builder') {
+      showWtScreen('builder');
+      renderMuscleGrid();
+      if (activeMuscle) renderExPicker(activeMuscle);
+      updateBldStartBar();
+    } else {
+      showWtScreen(customWt.length ? 'execute' : 'home');
+      if (customWt.length) renderExecute();
+    }
+  }
+
+  updateCtaLabel();
+
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      window.scrollTo(0, 0);
+      document.documentElement.scrollTop = 0;
+      document.body.scrollTop = 0;
+    });
+  });
+}
+window.goTo = goTo;
+
+function ctaAction() {
+  const actions = {
+    calendar: () => goTo('workout','Тренировка'),
+    home: () => goTo('workout','Тренировка'),
+    workout: () => {
+      if (currentWtScreen === 'execute' && Array.isArray(customWt) && customWt.length) {
+        renderExecute();
+        updateCtaLabel();
+        return;
+      }
+      if (currentWtScreen === 'builder' && Array.isArray(customWt) && customWt.length) {
+        startCustomWorkout();
+        return;
+      }
+    },
+    stats: renderStats,
+    diary: openBodySheet,
+    profile: saveProfile,
+    simulation: runSimulation,
+    nutrition: openMealPickerSheet
+  };
+  (actions[currentPage] || (() => {}))();
+}
+window.ctaAction = ctaAction;
+
+// ==================== HOME ====================
+function renderHome() {
+  profile = JSON.parse(localStorage.getItem('fs-profile') || 'null');
+  if (!profile) return;
+
+  document.getElementById('home-empty').style.display = 'none';
+  document.getElementById('home-content').style.display = 'block';
+
+  const lastWorkoutDiv = document.getElementById('last-workout-info');
+  if (lastWorkoutDiv) {
+    if (diary.length > 0) {
+      const last = diary[0];
+      let dateDisplay = last.date;
+      if (dateDisplay.includes(',')) dateDisplay = dateDisplay.split(',')[0];
+      lastWorkoutDiv.innerHTML = `${last.type || 'Тренировка'} (${dateDisplay})`;
+    } else {
+      lastWorkoutDiv.innerHTML = `Нет тренировок`;
+    }
+  }
+
+  renderWater();
+  updateReminderUI();
+
+  const scrollArea = document.querySelector('.scroll-area');
+  if (scrollArea) scrollArea.scrollTop = 0;
+}
+window.renderHome = renderHome;
+
+// ==================== STATS ====================
+function renderStats() {
+  if (!profile) return;
+
+  const bmr      = Math.round(calcBMR(profile));
+  const baseTdee = Math.round(bmr * profile.activity);
+
+  // ── Поправка на стаж тренировок ──
+  const expVal   = parseFloat(profile.exp || 0);
+  const coachVal = profile.coach || 'no';
+  const expFactors = { 0: 0.97, 0.5: 0.98, 1: 1.00, 2: 1.02, 3: 1.04, 5: 1.06 };
+  let expFactor = expFactors[expVal] !== undefined ? expFactors[expVal] : 1.00;
+  if (coachVal === 'now' || coachVal === 'past') expFactor = Math.min(expFactor + 0.01, 1.07);
+  const tdee     = Math.round(baseTdee * expFactor);
+  const expDelta = tdee - baseTdee;
+
+  // Авто-коррекция цели по соотношению текущего и целевого веса
+  const w = +profile.weight;
+  const t = +profile.target;
+  let smartGoal = profile.goal;
+  if (w && t) {
+    if      (t > w + 1)  smartGoal = 'gain';
+    else if (t < w - 1)  smartGoal = 'loss';
+    else                  smartGoal = 'maintain';
+  }
+  const contradiction = profile.goal && smartGoal !== profile.goal;
+  if (contradiction) {
+    profile.goal = smartGoal;
+    const sel = document.getElementById('p-goal');
+    if (sel) sel.value = smartGoal;
+    localStorage.setItem('fs-profile', JSON.stringify(profile));
+  }
+
+  // Рекомендация с учётом возраста
+  const _statsAge = Number(profile.age) || 25;
+  let rec = tdee;
+  if (profile.goal === 'loss') rec -= (_statsAge > 55 ? 300 : 400);
+  if (profile.goal === 'gain') rec += (_statsAge > 55 ? 200 : 300);
+  rec = Math.max(1200, rec);
+
+  const ideal = t ? t + ' кг' : '—';
+  document.getElementById('s-ideal').textContent = ideal;
+  document.getElementById('s-bmr').textContent   = bmr  + ' ккал';
+  document.getElementById('s-tdee').textContent  = tdee + ' ккал';
+  document.getElementById('s-kcal').textContent  = rec  + ' ккал';
+  // сохраняем поправку в глобал для попапа
+  window._expDelta = expDelta;
+  window._expFactor = expFactor;
+  window._expVal = expVal;
+  window._coachVal = coachVal;
+
+  // ===== ИМТ =====
+  const h_m = (profile.height || 175) / 100;
+  const curBMI  = profile.weight ? +(profile.weight / (h_m * h_m)).toFixed(1) : null;
+  const targBMI = t               ? +(t              / (h_m * h_m)).toFixed(1) : null;
+  const bmiEl    = document.getElementById('s-bmi');
+  const bmiBadge = document.getElementById('s-bmi-badge');
+  const bmiLabel = document.getElementById('s-bmi-label');
+  function bmiCategory(b) {
+    if (b < 16)   return { label: 'Критический дефицит', color: '#b91c1c', bg: 'rgba(185,28,28,0.12)' };
+    if (b < 18.5) return { label: 'Дефицит массы',       color: '#d97706', bg: 'rgba(217,119,6,0.12)' };
+    if (b < 25)   return { label: 'Норма',                color: '#16a34a', bg: 'rgba(22,163,74,0.12)' };
+    if (b < 27)   return { label: 'Предызбыток',          color: '#84cc16', bg: 'rgba(132,204,22,0.12)' };
+    if (b < 30)   return { label: 'Выше нормы',           color: '#d97706', bg: 'rgba(217,119,6,0.12)' };
+    if (b < 35)   return { label: 'Ожирение I',           color: '#dc2626', bg: 'rgba(220,38,38,0.12)' };
+    if (b < 40)   return { label: 'Ожирение II',          color: '#b91c1c', bg: 'rgba(185,28,28,0.15)' };
+    return               { label: 'Ожирение III',         color: '#7f1d1d', bg: 'rgba(127,29,29,0.18)' };
+  }
+  if (bmiEl && curBMI) {
+    const cat = bmiCategory(curBMI);
+    bmiEl.textContent = curBMI;
+    bmiEl.style.color = cat.color;
+    if (bmiBadge) {
+      bmiBadge.textContent = cat.label;
+      bmiBadge.style.color = cat.color;
+      bmiBadge.style.background = cat.bg;
+      bmiBadge.style.display = 'inline-block';
+    }
+    if (bmiLabel) {
+      if (targBMI) {
+        const tcat = bmiCategory(targBMI);
+        // При наборе мышечной массы ИМТ 25-30 — норма для спортсмена
+        const isGain = profile.goal === 'gain';
+        const muscleNote = (isGain && targBMI >= 25 && targBMI < 30)
+          ? ' <span style="color:var(--text-muted);font-size:10px;">(норма для набора мышц)</span>'
+          : '';
+        bmiLabel.innerHTML = 'Сейчас: ' + curBMI + ' &nbsp;·&nbsp; <span style="color:' + tcat.color + '">Цель: ' + targBMI + ' (' + tcat.label + ')</span>' + muscleNote;
+      } else {
+        bmiLabel.textContent = 'Индекс массы тела';
+      }
+    }
+  }
+
+  const goalLabels = {
+    loss:     (_statsAge > 55)
+                ? '🔥 Цель: Похудение  •  −300 ккал от TDEE (норма 55+)'
+                : '🔥 Цель: Похудение  •  −400 ккал от TDEE',
+    maintain: '⚖️ Цель: Поддержание  •  ±0 ккал',
+    gain:     (_statsAge > 55)
+                ? '💪 Цель: Набор  •  +200 ккал к TDEE (норма 55+)'
+                : (_statsAge < 18
+                    ? '💪 Цель: Рост  •  +200 ккал к TDEE (до 18 лет)'
+                    : '💪 Цель: Набор массы  •  +300 ккал к TDEE')
+  };
+  const fixLabels = { loss: 'Похудение', maintain: 'Поддержание', gain: 'Набор массы' };
+  const banner = document.getElementById('stats-goal-banner');
+  let txt = goalLabels[profile.goal] || '';
+  if (contradiction) {
+    txt += '\n⚠️ Цель автоматически скорректирована на «' + (fixLabels[smartGoal] || smartGoal) + '» — соответствует твоим весам';
+  }
+  banner.style.whiteSpace = 'pre-line';
+  banner.textContent = txt;
+}
+
+function showStatsTip(key) {
+  var expLabels = {'0':'новичок','0.5':'до 6 мес','1':'6-12 мес','2':'1-2 года','3':'2-5 лет','5':'5+ лет'};
+  var coachLabels = {'no':'самостоятельно','past':'опыт с тренером','now':'с тренером сейчас'};
+  var expLbl   = expLabels[String(window._expVal  !== undefined ? window._expVal  : 0)] || '';
+  var coachLbl = coachLabels[window._coachVal || 'no'] || '';
+  var delta    = window._expDelta || 0;
+  var sign     = delta > 0 ? '+' : '';
+  var factor   = window._expFactor || 1;
+  var tdeeBody = 'BMR × коэффициент активности. Столько калорий ты тратишь в реальности с учётом тренировок и образа жизни.';
+  if (factor !== 1.00) {
+    tdeeBody += '\n\nПоправка стажа (' + expLbl + (coachLbl !== 'самостоятельно' ? ', ' + coachLbl : '') + '): ' + sign + delta + ' ккал\nОпытные атлеты сжигают больше; новички — чуть меньше, пока тело адаптируется.';
+  }
+  var tips = {
+    goal: { title: 'Цель', body: 'Целевой вес, к которому ты стремишься. Влияет на выбор стратегии: похудение, поддержание или набор массы.' },
+    bmi:  { title: 'ИМТ', body: 'ИМТ = вес / рост². Норма: 18.5–24.9. При наборе мышечной массы ИМТ 25–27 допустим — мышцы тяжелее жира.' },
+    bmr:  { title: 'BMR', body: 'Калории, которые тело сжигает в полном покое — на дыхание, сердце, органы. Формула Миффлина–Сан Жеора.' },
+    tdee: { title: 'TDEE', body: tdeeBody },
+    kcal: { title: 'Рекомендуемые ккал', body: 'TDEE ± поправка на цель:\n• Похудение: −400 ккал (−300 после 55 лет)\n• Поддержание: без изменений\n• Набор массы: +300 ккал (+200 после 55 лет)\n\nМинимум — 1200 ккал.' }
+  };
+  var t = tips[key];
+  if (!t) return;
+
+  // Удаляем старый тултип, если есть
+  var old = document.getElementById('stats-tip-overlay');
+  if (old) old.remove();
+
+  // Создаём оверлей с центрированием
+  var overlay = document.createElement('div');
+  overlay.id = 'stats-tip-overlay';
+  overlay.style.cssText =
+    'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.55);' +
+    'display:flex;align-items:center;justify-content:center;';
+
+  // Панель — центрирована, с закруглениями и кнопкой закрытия
+  var panel = document.createElement('div');
+  panel.style.cssText =
+    'background:var(--card-bg,#1c1c1e);border-radius:20px;padding:20px;' +
+    'width:90%;max-width:480px;max-height:80vh;overflow-y:auto;' +
+    'box-shadow:0 4px 32px rgba(0,0,0,0.4);touch-action:pan-y;user-select:none;';
+
+  panel.innerHTML =
+    '<div style="display:flex;justify-content:flex-end;margin-bottom:8px;">' +
+      '<button onclick="this.closest(\'#stats-tip-overlay\').remove()" ' +
+        'style="background:none;border:none;color:var(--text-light);font-size:20px;cursor:pointer;padding:0 4px;">✕</button>' +
+    '</div>' +
+    '<div style="font-size:16px;font-weight:700;color:var(--text);margin-bottom:10px;">' + t.title + '</div>' +
+    '<div style="font-size:14px;color:var(--text-light);line-height:1.65;white-space:pre-line;">' + t.body + '</div>';
+
+  overlay.appendChild(panel);
+  overlay.addEventListener('click', function(e) {
+    if (e.target === overlay) overlay.remove();
+  });
+
+  document.body.appendChild(overlay);
+}
+window.showStatsTip = showStatsTip;
+window.renderStats = renderStats;
+
+// ==================== DIARY & BODY LOG ====================
+// FIX: добавлен уникальный id для каждой тренировки
+function generateWorkoutId() {
+  return Date.now() + '_' + Math.random().toString(36).slice(2);
+}
+
+function diaryIso(value) {
+  const parts = (value || '').split(',')[0].trim().split('.');
+  return parts.length === 3 ? `${parts[2]}-${parts[1]}-${parts[0]}` : value || '';
+}
+
+function renderDiary() {
+  const dl = document.getElementById('diary-list');
+  if (!dl) return;
+  const countEl = document.getElementById('diary-count');
+  const summaryEl = document.getElementById('diary-summary');
+  if (countEl) countEl.textContent = `${diary.length} ${diary.length === 1 ? 'тренировка' : diary.length < 5 ? 'тренировки' : 'тренировок'}`;
+  if (summaryEl) summaryEl.textContent = diary.length ? `Всего записей: ${diary.length}` : 'Добавляйте тренировки в разделе «Тренировка»';
+  if (!diary.length) { dl.innerHTML = '<div class="diary-empty">Тренировок пока нет</div>'; renderBodyLog(); return; }
+  const months = ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
+  const sorted = [...diary].sort((a,b) => diaryIso(b.date).localeCompare(diaryIso(a.date)));
+  const years = new Map();
+  sorted.forEach(e => {
+    const p = (e.date || '').split(',')[0].trim().split('.');
+    const year = p.length === 3 ? p[2] : 'other', month = p.length === 3 ? p[1] : 'other';
+    if (!years.has(year)) years.set(year, new Map());
+    const ms = years.get(year);
+    if (!ms.has(month)) ms.set(month, { label: p.length === 3 ? months[Number(month)-1] : 'История', entries:[], kcal:0 });
+    const g = ms.get(month); g.entries.push(e); g.kcal += Number(e.kcal) || 0;
+  });
+  let html = '', yi = 0;
+  years.forEach((monthMap, year) => {
+    const yId = `history-year-${yi}`;
+    const yearTitle = year === 'other' ? 'История тренировок' : year;
+    html += `<section class="history-year"><button class="history-year-head" type="button" onclick="toggleHistoryGroup('${yId}',this)"><span>${yearTitle}</span><small>${[...monthMap.values()].reduce((n,g)=>n+g.entries.length,0)} тренировок</small><i>⌄</i></button><div id="${yId}" class="history-year-content">`;
+    let mi = 0;
+    monthMap.forEach((g, month) => {
+      const mId = `history-month-${yi}-${mi}`;
+      const countWord = g.entries.length === 1 ? 'тренировка' : g.entries.length < 5 ? 'тренировки' : 'тренировок';
+      html += `<section class="history-month"><button class="history-month-head" type="button" onclick="toggleHistoryGroup('${mId}',this)"><span><b class="history-month-title">${g.label}</b><small class="history-month-meta">${g.entries.length} ${countWord}${g.kcal ? ` · ${g.kcal} ккал` : ''}</small></span><i>⌄</i></button><div class="history-rows" id="${mId}">`;
+      g.entries.forEach(e => {
+        const p = (e.date || '').split(',')[0].trim().split('.'), day = p[0] || '—';
+        const weekday = p.length === 3 ? new Date(`${p[2]}-${p[1]}-${p[0]}T00:00:00`).toLocaleDateString('ru-RU',{weekday:'short'}).replace('.','') : '';
+        const exerciseCount = (e.exercises || '').split('\n').filter(Boolean).length;
+        html += `<button class="history-row" type="button" onclick="openDiaryDetail('${e.id}')"><span class="history-date"><b>${day}</b><small>${weekday}</small></span><span class="history-main"><b>${e.type || 'Тренировка'}</b><small>${exerciseCount ? `${exerciseCount} упр.` : 'Без упражнений'}${e.kcal ? ` · ${e.kcal} ккал` : ''}</small></span><span class="history-arrow">›</span></button>`;
+      });
+      html += `</div></section>`; mi++;
+    });
+    html += `</div></section>`; yi++;
+  });
+  dl.innerHTML = html;
+  renderBodyLog();
+}
+window.renderDiary = renderDiary;
+
+function toggleHistoryGroup(id, button) {
+  const content = document.getElementById(id); if (!content) return;
+  const open = content.classList.toggle('history-group-open');
+  button.classList.toggle('history-group-open', open);
+}
+window.toggleHistoryGroup = toggleHistoryGroup;
+
+function showMoreHistory(monthIndex) {
+  document.querySelectorAll(`#history-month-${monthIndex} .history-row-hidden`).forEach(el => el.classList.remove('history-row-hidden'));
+  const btn = document.getElementById(`history-more-${monthIndex}`); if (btn) btn.remove();
+}
+window.showMoreHistory = showMoreHistory;
+
+function openDiaryDetail(id) {
+  const e = diary.find(x => String(x.id) === String(id)); if (!e) return;
+  let overlay = document.getElementById('diary-detail-overlay');
+  if (!overlay) { overlay = document.createElement('div'); overlay.id = 'diary-detail-overlay'; overlay.className = 'sheet-overlay'; overlay.onclick = closeDiaryDetail; document.body.appendChild(overlay); }
+  let sheet = document.getElementById('diary-detail-sheet');
+  if (!sheet) { sheet = document.createElement('div'); sheet.id = 'diary-detail-sheet'; sheet.className = 'bottom-sheet diary-detail-sheet'; document.body.appendChild(sheet); }
+  const exs = (e.exercises || '').split('\n').filter(Boolean);
+  sheet.innerHTML = `<div class="sheet-handle"></div><div class="diary-detail-top"><div><div class="sheet-title" style="margin-bottom:4px">${e.type || 'Тренировка'}</div><div class="diary-detail-date">${e.date || ''}</div></div><button class="diary-detail-close" onclick="closeDiaryDetail()">×</button></div><div class="diary-detail-kpis">${e.kcal ? `<div><b>${e.kcal}</b><span>ккал</span></div>` : ''}<div><b>${exs.length}</b><span>упражнений</span></div></div><div class="diary-detail-list">${exs.length ? exs.map(x => `<div>${x}</div>`).join('') : '<div class="empty-state">Упражнения не сохранены</div>'}</div><button class="diary-detail-delete" onclick="delDiary('${e.id}');closeDiaryDetail()">Удалить тренировку</button>`;
+  overlay.classList.add('show'); sheet.classList.add('show');
+}
+window.openDiaryDetail = openDiaryDetail;
+function closeDiaryDetail() { document.getElementById('diary-detail-overlay')?.classList.remove('show'); document.getElementById('diary-detail-sheet')?.classList.remove('show'); }
+window.closeDiaryDetail = closeDiaryDetail;
+
+function delDiary(id) {
+  if (!confirm('Удалить эту тренировку?')) return;
+  diary = diary.filter(e => e.id !== id);
+  localStorage.setItem('fs-diary', JSON.stringify(diary));
+  renderDiary();
+  renderCalendar(); // FIX: обновляем календарь после удаления
+  toast('🗑 Удалено');
+}
+window.delDiary = delDiary;
+
+function renderWlog() {
+  // Weight is rendered together with body measurements in renderBodyLog.
+}
+
+function normalizeBodyDate(value) {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text;
+  let match = text.match(/^(\d{1,2})[.\/](\d{1,2})[.\/](\d{4})/);
+  if (match) return `${match[3]}-${String(match[2]).padStart(2, '0')}-${String(match[1]).padStart(2, '0')}`;
+  match = text.match(/^(\d{4})[.\/](\d{1,2})[.\/](\d{1,2})/);
+  if (match) return `${match[1]}-${String(match[2]).padStart(2, '0')}-${String(match[3]).padStart(2, '0')}`;
+  const parsed = new Date(text);
+  return Number.isNaN(parsed.getTime()) ? '' : getLocalISODate(parsed);
+}
+
+function normalizeBodyEntry(entry) {
+  if (!entry || typeof entry !== 'object') return null;
+  const date = normalizeBodyDate(entry.date) || getLocalISODate();
+  const normalized = { date };
+  ['weight','neck','chest','bicep','forearm','waist','glutes','thigh','calf'].forEach(key => {
+    const raw = String(entry[key] ?? '').trim().replace(',', '.');
+    const value = Number(raw);
+    if (raw !== '' && Number.isFinite(value) && value >= 0) normalized[key] = value;
+  });
+  return Object.keys(normalized).length > 1 ? normalized : null;
+}
+
+function refreshBodyStorage() {
+  try {
+    const rawWeight = JSON.parse(localStorage.getItem('fs-wlog') || '[]');
+    const rawBody = JSON.parse(localStorage.getItem('fs-bodylog') || '[]');
+    wlog = Array.isArray(rawWeight) ? rawWeight.map(normalizeBodyEntry).filter(Boolean).map(e => ({ date:e.date, weight:e.weight, id:e.id || e.date })).filter(e => e.weight) : [];
+    bodyLog = Array.isArray(rawBody) ? rawBody.map(normalizeBodyEntry).filter(Boolean) : [];
+  } catch (error) {
+    wlog = Array.isArray(wlog) ? wlog : [];
+    bodyLog = Array.isArray(bodyLog) ? bodyLog : [];
+  }
+}
+
+function exportBodyBackup() {
+  refreshBodyStorage();
+  const blob = new Blob([JSON.stringify({ wlog, bodyLog }, null, 2)], { type:'application/json' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url; link.download = 'fitsim-zamery.json'; link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+window.exportBodyBackup = exportBodyBackup;
+
+function importBodyBackup() {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'application/json,.json';
+  input.onchange = event => {
+    const file = event.target.files && event.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const data = JSON.parse(reader.result);
+        const weights = Array.isArray(data.wlog) ? data.wlog : Array.isArray(data['fs-wlog']) ? data['fs-wlog'] : [];
+        const measurements = Array.isArray(data.bodyLog) ? data.bodyLog : Array.isArray(data['fs-bodylog']) ? data['fs-bodylog'] : [];
+        if (!weights.length && !measurements.length) throw new Error('empty');
+        localStorage.setItem('fs-wlog', JSON.stringify(weights));
+        localStorage.setItem('fs-bodylog', JSON.stringify(measurements));
+        refreshBodyStorage();
+        renderBodyLog();
+        toast('✅ Замеры импортированы');
+      } catch (error) { toast('❗ Не удалось прочитать файл замеров'); }
+    };
+    reader.readAsText(file);
+  };
+  input.click();
+}
+window.importBodyBackup = importBodyBackup;
+
+let bodyLogRetryTimer = null;
+function renderBodyLog() {
+  const c = document.getElementById('body-log');
+  if (!c) { if (!bodyLogRetryTimer) bodyLogRetryTimer = setTimeout(() => { bodyLogRetryTimer = null; renderBodyLog(); }, 80); return; }
+  refreshBodyStorage();
+  const labels = { neck:'Шея', chest:'Грудь', bicep:'Бицепс', forearm:'Предплечье', waist:'Талия', glutes:'Ягодицы', thigh:'Бедро', calf:'Икра' };
+  const byDate = new Map();
+  bodyLog.forEach(e => byDate.set(e.date, { ...(byDate.get(e.date) || {}), ...e }));
+  wlog.forEach(e => byDate.set(e.date, { ...(byDate.get(e.date) || {}), weight:e.weight, weightId:e.id }));
+  const entries = [...byDate.values()].sort((a, b) => b.date.localeCompare(a.date));
+  const lastEl = document.getElementById('diary-last-body'), chartCard = document.getElementById('body-chart-card');
+  if (lastEl) lastEl.innerHTML = entries[0] ? `<div class="diary-last-date">${formatBodyDate(entries[0].date)}</div>` : '<div class="diary-empty">Пока нет замеров</div>';
+  if (chartCard) chartCard.style.display = entries.length >= 2 ? '' : 'none';
+  if (!entries.length) { c.innerHTML = '<div class="empty-state" style="color:var(--text-light);font-size:.85rem;padding:4px 0 8px">Добавь первый замер — история появится здесь.</div>'; renderBodyChart(); return; }
+  const months = ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'], groups = new Map();
+  entries.forEach(e => { const [year, month] = e.date.split('-'), key = `${year}-${month}`; if (!groups.has(key)) groups.set(key, { key, title:`${year} ${months[+month - 1]}`, entries:[] }); groups.get(key).entries.push(e); });
+  c.innerHTML = [...groups.values()].map(g => `<section class="body-month-group"><button type="button" class="body-month-head is-collapsed" onclick="toggleBodyMonth('${g.key}', this)" aria-expanded="false"><span>${g.title}</span><small>${g.entries.length} ${bodyEntryWord(g.entries.length)}</small><i>⌃</i></button><div class="body-month-rows is-collapsed" id="body-month-${g.key}">${g.entries.map((e,i) => bodyEntryHtml(e, g.entries[i+1], labels)).join('')}</div></section>`).join('');
+  const state = JSON.parse(localStorage.getItem('fs-body-months-collapsed') || '{}');
+  Object.keys(state).forEach(key => { if (state[key] === false) { const rows=document.getElementById(`body-month-${key}`), btn=rows?.previousElementSibling; if(rows&&btn){ rows.classList.remove('is-collapsed'); btn.classList.remove('is-collapsed'); btn.setAttribute('aria-expanded','true'); } } });
+  renderBodyChart();
+}
+function bodyEntryWord(n) { const r=n%10,h=n%100; return r===1&&h!==11?'замер':r>=2&&r<=4&&!(h>=12&&h<=14)?'замера':'замеров'; }
+function bodyEntryHtml(e, prev, labels) { let weightHtml=''; if(e.weight!==undefined&&e.weight!==null&&e.weight!==''){let diff='';if(prev&&prev.weight!==undefined){const d=+(Number(e.weight)-Number(prev.weight)).toFixed(1);if(d)diff=`<div class="wlog-diff ${d<0?'neg':'pos'}">${d>0?'+':''}${d} кг</div>`;}weightHtml=`<div class="body-weight"><strong>${e.weight} кг</strong>${diff}<span class="body-weight-label">Вес</span></div>`;}let grid='';Object.keys(labels).forEach(k=>{if(e[k]!==undefined&&e[k]!==null&&e[k]!==''){let diff='';if(prev&&prev[k]!==undefined&&prev[k]!==null){const d=+(Number(e[k])-Number(prev[k])).toFixed(1);if(d)diff=`<div style="font-size:.6rem;font-weight:700;color:${d<0?'#27ae60':'#e74c3c'}">${d>0?'+':''}${d}</div>`;}grid+=`<div class="bg-item"><div class="bg-val">${e[k]} см</div><div class="bg-lbl">${labels[k]}</div>${diff}</div>`;}});return `<div class="body-entry"><div style="display:flex;justify-content:space-between;align-items:center"><div class="wlog-date-text" style="font-weight:700;color:var(--text)">${formatBodyDate(e.date)}</div><button class="wlog-delete" style="width:26px;height:26px;font-size:.8rem" onclick="delBody('${e.date}')">✕</button></div>${weightHtml}${grid?`<div class="body-grid">${grid}</div>`:''}</div>`; }
+function toggleBodyMonth(key, button) { const rows=document.getElementById(`body-month-${key}`); if(!rows)return; const closed=rows.classList.toggle('is-collapsed'); button.classList.toggle('is-collapsed',closed); button.setAttribute('aria-expanded',String(!closed)); const state=JSON.parse(localStorage.getItem('fs-body-months-collapsed')||'{}'); state[key]=closed; localStorage.setItem('fs-body-months-collapsed',JSON.stringify(state)); }
+window.toggleBodyMonth=toggleBodyMonth;
+function delBody(date) {
+  if (!confirm('Удалить вес и замеры за эту дату?')) return;
+  bodyLog = bodyLog.filter(e => e.date !== date);
+  wlog = wlog.filter(e => e.date !== date);
+  localStorage.setItem('fs-bodylog', JSON.stringify(bodyLog));
+  localStorage.setItem('fs-wlog', JSON.stringify(wlog));
+  renderBodyLog();
+  toast('🗑 Запись удалена');
+}
+window.delBody = delBody;
+window.delWeight = delBody;
+
+
+function getLocalISODate(date = new Date()) {
+  const offset = date.getTimezoneOffset() * 60 * 1000;
+  return new Date(date.getTime() - offset).toISOString().slice(0, 10);
+}
+
+function formatBodyDate(value) {
+  const parts = String(value || '').split('-');
+  if (parts.length !== 3) return value ? String(value) : 'Без даты';
+  const date = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+  return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleDateString('ru-RU', {
+    day: 'numeric', month: 'long', year: 'numeric'
+  });
+}
+
+function openBodySheet() {
+  document.getElementById('sheet-overlay').classList.add('show');
+  document.getElementById('body-sheet').classList.add('show');
+  document.getElementById('sb-date').value = getLocalISODate();
+  ['neck','chest','bicep','forearm','waist','glutes','thigh','calf'].forEach(k => {
+    document.getElementById('sb-' + k).value = '';
+  });
+  document.getElementById('sb-weight').value = '';
+}
+window.openBodySheet = openBodySheet;
+
+function addBody() {
+  const d = document.getElementById('sb-date').value || getLocalISODate();
+  const entry = { date: d };
+  const keys = ['neck','chest','bicep','forearm','waist','glutes','thigh','calf'];
+  let hasData = false;
+
+  keys.forEach(k => {
+    const inp = document.getElementById('sb-' + k);
+    const v = parseFloat(inp.value);
+    if (inp.value !== '' && !isNaN(v)) {
+      entry[k] = v;
+      hasData = true;
+    }
+  });
+
+  const weightVal = parseFloat(document.getElementById('sb-weight').value);
+  if (Number.isFinite(weightVal) && weightVal > 0) {
+    const wExists = wlog.findIndex(e => e.date === d);
+    if (wExists !== -1) wlog[wExists].weight = weightVal;
+    else wlog.push({ date: d, weight: weightVal, id: Date.now() });
+    localStorage.setItem('fs-wlog', JSON.stringify(wlog));
+    hasData = true;
+  }
+
+  if (!hasData) {
+    toast('❗ Заполни хотя бы одно поле');
+    return;
+  }
+
+  const hasBodyData = keys.some(k => entry[k] !== undefined);
+  if (hasBodyData) {
+    const exists = bodyLog.findIndex(e => e.date === d);
+    if (exists !== -1) bodyLog[exists] = entry;
+    else bodyLog.push(entry);
+    localStorage.setItem('fs-bodylog', JSON.stringify(bodyLog));
+  }
+
+  refreshBodyStorage();
+  renderBodyLog();
+  closeAllSheets();
+  toast('✅ Замеры сохранены');
+}
+window.addBody = addBody;
+
+function renderBodyChart() {
+  const metric = document.getElementById('body-chart-metric')?.value || 'weight';
+  const el = document.getElementById('body-chart-canvas');
+  if (!el) return;
+  const source = metric === 'weight' ? wlog : bodyLog;
+  const sorted = [...source].filter(e => e[metric] !== undefined && e[metric] !== null && e[metric] !== '').sort((a,b) => a.date.localeCompare(b.date));
+  if (sorted.length < 2) { el.innerHTML = '<div style="text-align:center;color:var(--text-light);font-size:13px;padding:16px 0 2px">Добавьте минимум две записи для графика</div>'; return; }
+  const vals = sorted.map(e => parseFloat(e[metric])), dates = sorted.map(e => e.date), minV = Math.min(...vals), maxV = Math.max(...vals), range = maxV - minV || 1, W = 280, H = 90, padX = 10, padY = 14;
+  const xs = vals.map((v,i) => padX + i/(vals.length-1)*(W-2*padX)), ys = vals.map(v => H-padY-(v-minV)/range*(H-2*padY));
+  const poly = xs.map((x,i) => `${x},${ys[i]}`).join(' '), area = `${xs[0]},${H-padY} ${poly} ${xs[xs.length-1]},${H-padY}`;
+  const dots = vals.map((v,i) => `<circle cx="${xs[i]}" cy="${ys[i]}" r="3.5" fill="var(--accent)"/><text x="${xs[i]}" y="${ys[i]-7}" text-anchor="middle" font-size="8" fill="var(--text-light)">${v}</text>`).join('');
+  const names = {weight:'Вес',waist:'Талия',chest:'Грудь',bicep:'Бицепс',thigh:'Бедро',neck:'Шея',forearm:'Предплечье',glutes:'Ягодицы',calf:'Голень'}, unit = metric === 'weight' ? ' кг' : ' см';
+  el.innerHTML = `<div style="font-size:11px;color:var(--text-light);font-weight:600;margin-bottom:6px">${names[metric]}: ${vals[0]}${unit} → ${vals[vals.length-1]}${unit}</div><svg viewBox="0 0 ${W} ${H+12}" style="width:100%;overflow:visible"><defs><linearGradient id="bcg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--accent)" stop-opacity=".25"/><stop offset="1" stop-color="var(--accent)" stop-opacity="0"/></linearGradient></defs><polygon points="${area}" fill="url(#bcg)"/><polyline points="${poly}" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>${dots}<text x="${xs[0]}" y="${H+8}" text-anchor="middle" font-size="8" fill="var(--text-light)">${dates[0].split('-').slice(1).reverse().join('.')}</text><text x="${xs.at(-1)}" y="${H+8}" text-anchor="end" font-size="8" fill="var(--text-light)">${dates[dates.length - 1].split('-').slice(1).reverse().join('.')}</text></svg>`;
+}
+window.renderBodyChart = renderBodyChart;
+
+function populateProgSelect() {
+  const sel = document.getElementById('prog-select');
+  if (!sel) return;
+  const cur = sel.value;
+  const names = Object.keys(exlog).sort();
+  sel.innerHTML = '<option value="">— Выбери упражнение —</option>' +
+    names.map(n => `<option value="${n}" ${n === cur ? 'selected' : ''}>${n}</option>`).join('');
+}
+
+function renderProgress() {
+  populateProgSelect();
+  const sel = document.getElementById('prog-select');
+  const chartEl = document.getElementById('prog-chart');
+  const tableEl = document.getElementById('prog-table');
+  const prEl = document.getElementById('prog-pr');
+  if (!sel || !chartEl || !tableEl) return;
+
+  const name = sel.value;
+  if (!name || !exlog[name] || !exlog[name].length) {
+    chartEl.innerHTML = '';
+    tableEl.innerHTML = '<div style="color:var(--text-muted);font-size:13px;text-align:center;padding:16px">Нет данных. Сохрани тренировку с этим упражнением.</div>';
+    if (prEl) prEl.innerHTML = '';
+    return;
+  }
+
+  const entries = exlog[name].slice(-20);
+  const kgVals = entries.map(e => e.kg || 0);
+  const maxKg = Math.max(...kgVals) || 1;
+  if (prEl) prEl.innerHTML = maxKg > 0 ? `<span class="prog-pr-badge">🏆 ПР: ${maxKg} кг</span>` : '';
+
+  let bars = '';
+  const barW = Math.max(20, Math.min(44, Math.floor(300 / entries.length)));
+  entries.forEach((e, i) => {
+    const pct = maxKg > 0 ? Math.round((e.kg / maxKg) * 100) : 0;
+    const prev = i > 0 ? entries[i - 1].kg : e.kg;
+    const diff = e.kg - prev;
+    const color = diff > 0 ? '#22c55e' : diff < 0 ? '#ef4444' : 'var(--accent)';
+    bars += `
+      <div style="display:inline-flex;flex-direction:column;align-items:center;margin:0 2px;vertical-align:bottom">
+        <div style="font-size:9px;color:${color};font-weight:600;margin-bottom:2px">${e.kg > 0 ? e.kg + 'кг' : ''}</div>
+        <div style="width:${barW}px;height:${Math.max(4, Math.round(pct * 0.8))}px;background:${color};border-radius:3px 3px 0 0;opacity:0.85"></div>
+        <div style="font-size:8px;color:var(--text-muted);margin-top:3px;max-width:${barW}px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${e.date.split('.').slice(0,2).join('/')}</div>
+      </div>
+    `;
+  });
+  chartEl.innerHTML = `<div style="display:flex;align-items:flex-end;padding:8px 0 4px;overflow-x:auto;min-height:80px">${bars}</div>`;
+
+  const rows = [...entries].reverse().map((e, i, arr) => {
+    const prev = arr[i + 1];
+    let tag = '';
+    if (e.kg > 0) {
+      if (!prev || e.kg > prev.kg) tag = '<span class="prog-tag up">↑ +' + (prev ? (e.kg - prev.kg).toFixed(1) : '') + ' кг</span>';
+      else if (e.kg < prev.kg) tag = '<span class="prog-tag down">↓</span>';
+      else tag = '<span class="prog-tag same">= стабильно</span>';
+    }
+    const vol = e.s && e.r ? `${e.s}×${e.r}` : '—';
+    return `<tr><td>${e.date}</td><td><strong>${e.kg > 0 ? e.kg + ' кг' : 'б/веса'}</strong></td><td style="color:var(--text-muted)">${vol}</td><td>${tag}</td></tr>`;
+  }).join('');
+
+  tableEl.innerHTML = `
+    <table class="prog-table">
+      <thead><tr><th>Дата</th><th>Вес</th><th>Подх×Пов</th><th>Δ</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `;
+}
+window.renderProgress = renderProgress;
+
+// ==================== КАЛЕНДАРЬ ====================
+let calCurrentYear = null;
+let calCurrentMonth = null;
+
+function initCalendarDefaults() {
+  const now = new Date();
+  calCurrentYear = now.getFullYear();
+  calCurrentMonth = now.getMonth();
+}
+
+function changeCalMonth(delta) {
+  if (calCurrentYear === null) initCalendarDefaults();
+  calCurrentMonth += delta;
+  if (calCurrentMonth < 0) {
+    calCurrentMonth = 11;
+    calCurrentYear--;
+  }
+  if (calCurrentMonth > 11) {
+    calCurrentMonth = 0;
+    calCurrentYear++;
+  }
+  renderCalendar();
+}
+window.changeCalMonth = changeCalMonth;
+
+function renderCalendar() {
+  const grid=document.getElementById('calendar-grid'),detail=document.getElementById('cal-day-detail'),empty=document.getElementById('calendar-empty'),monthLabel=document.getElementById('cal-month-label');
+  if(!grid)return;if(calCurrentYear===null)initCalendarDefaults();const year=calCurrentYear,month=calCurrentMonth,first=new Date(year,month,1),daysInMonth=new Date(year,month+1,0).getDate(),monthNames=['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];if(monthLabel)monthLabel.textContent=monthNames[month]+' '+year;
+  const workoutDays={},foodDays={},waterDays={};if(Array.isArray(diary))diary.forEach(d=>{const k=d.date?d.date.split(',')[0].trim():'';if(k)workoutDays[k]=1});JSON.parse(localStorage.getItem('fs-nutrition')||'[]').forEach(e=>{if(e.date)foodDays[e.date]=1});const hist=JSON.parse(localStorage.getItem('fs-water-hist')||'[]'),cur=JSON.parse(localStorage.getItem('fs-water')||'{}');hist.forEach(e=>{if(e.date&&Number(e.amount)>0){const [y,m,d]=e.date.split('-');waterDays[`${d}.${m}.${y}`]=1}});if(cur.date&&Number(cur.amount)>0){const [y,m,d]=cur.date.split('-');waterDays[`${d}.${m}.${y}`]=1}const plannedDays=typeof getPlannedWorkoutsForMonth==='function'?getPlannedWorkoutsForMonth(year,month):{};let html='',offset=(first.getDay()+6)%7;for(let i=0;i<offset;i++)html+='<div></div>';for(let d=1;d<=daysInMonth;d++){const dd=String(d).padStart(2,'0'),mm=String(month+1).padStart(2,'0'),dateStr=`${dd}.${mm}.${year}`,today=d===new Date().getDate()&&month===new Date().getMonth()&&year===new Date().getFullYear(),wt=workoutDays[dateStr],food=foodDays[dateStr],water=waterDays[dateStr],planned=plannedDays[dateStr],isPlanned=planned&&!planned.rest;let cls='cal-cell';if(today)cls+=' cal-cell-today';else if(wt||isPlanned)cls+=' cal-cell-workout';else if(food)cls+=' cal-cell-food';else if(water)cls+=' cal-cell-water';const border=today||wt||isPlanned?'var(--accent)':food?'#fb923c':water?'#38bdf8':'var(--border)';html+=`<div onclick="showCalDay('${dateStr}')" class="${cls}" style="text-align:center;border-radius:10px;padding:6px 2px;cursor:pointer;font-size:12px;font-weight:600;color:${today?'#fff':'var(--text)'};border:1.5px solid ${border};">${d}</div>`}grid.innerHTML=html;if(detail)detail.style.display='none';const anyData=Object.keys(workoutDays).length||Object.keys(foodDays).length||Object.keys(waterDays).length||Object.keys(plannedDays).length;if(empty)empty.style.display=anyData?'none':'block';
+}
+window.renderCalendar=renderCalendar;
+
+function showCalDay(dateStr) {
+  const detail=document.getElementById('cal-day-detail'), title=document.getElementById('cal-day-title'), entries=document.getElementById('cal-day-entries');
+  if (!entries || !title) return;
+  const parts=dateStr.split('.'), isoDate=`${parts[2]}-${parts[1]}-${parts[0]}`;
+  const dayDiary=Array.isArray(diary)?diary.filter(d=>d.date&&d.date.startsWith(dateStr)):[];
+  const allFood=JSON.parse(localStorage.getItem('fs-nutrition')||'[]'), dayNutr=allFood.filter(e=>e.date===dateStr);
+  const sum=k=>dayNutr.reduce((s,e)=>s+(Number(e[k])||0),0), totalKcal=sum('kcal'), totalProt=sum('protein'), totalFat=sum('fat'), totalCarbs=sum('carbs');
+  const waterHist=JSON.parse(localStorage.getItem('fs-water-hist')||'[]'), waterToday=JSON.parse(localStorage.getItem('fs-water')||'{"date":"","amount":0}');
+  const waterAmount=waterToday.date===isoDate?(waterToday.amount||0):((waterHist.find(h=>h.date===isoDate)||{}).amount||0);
+  const waterGoal=typeof calcWaterGoal==='function'?calcWaterGoal(profile):((profile&&profile.weight)?Math.round(profile.weight*30):2000), waterPct=Math.min(100,Math.round(waterAmount/waterGoal*100));
+  const months=['янв','фев','мар','апр','май','июн','июл','авг','сен','окт','ноя','дек']; title.textContent=`${+parts[0]} ${months[+parts[1]-1]} ${parts[2]}`;
+  let html='';
+  if(dayDiary.length){ html+=`<div class="cal-day-card"><div class="cal-day-card-title">Тренировка</div>`; dayDiary.forEach(d=>{html+=`<div class="cal-workout-row"><div><b>${d.type||'Тренировка'}</b>${d.exercises?`<small>${d.exercises.split('\n').slice(0,3).join(' · ')}${d.exercises.split('\n').length>3?'…':''}</small>`:''}</div><div class="cal-workout-actions">${d.kcal?`<em>${d.kcal} ккал</em>`:''}<button onclick="editDiaryFromCal('${d.id}','${dateStr}')">✏️</button><button class="danger" onclick="delDiaryFromCal('${d.id}','${dateStr}')">🗑️</button></div></div>`}); html+='</div>'; }
+  if(dayNutr.length){const foodId=`cal-food-${dateStr.replaceAll('.','-')}`,labels={breakfast:'🌅 Завтрак',lunch:'☀️ Обед',dinner:'🌙 Ужин',snack:'🍎 Перекус'},order=['breakfast','lunch','dinner','snack'],grouped={};dayNutr.forEach(e=>{const k=e.mealType||'snack';(grouped[k]||(grouped[k]=[])).push(e)});html+=`<div class="cal-day-card cal-food-card"><button class="cal-food-head" type="button" onclick="toggleCalFood('${foodId}',this)"><span><b>Питание</b><small>${Math.round(totalKcal)} ккал · Б ${Math.round(totalProt)} · Ж ${Math.round(totalFat)} · У ${Math.round(totalCarbs)}</small></span><i>⌄</i></button><div class="cal-food-body" id="${foodId}">`;order.filter(k=>grouped[k]).forEach(type=>{const items=grouped[type],ms=k=>items.reduce((s,e)=>s+(Number(e[k])||0),0);html+=`<div class="cal-meal"><div class="cal-meal-title"><b>${labels[type]}</b><span>${Math.round(ms('kcal'))} ккал · Б ${Math.round(ms('protein'))} · Ж ${Math.round(ms('fat'))} · У ${Math.round(ms('carbs'))}</span></div>${items.map(e=>`<div class="cal-food-item"><span>${e.name}</span><small>${Math.round(Number(e.kcal)||0)} ккал</small></div>`).join('')}</div>`});html+='</div></div>'}
+  if(waterAmount>0) html+=`<div class="cal-day-card"><div class="cal-day-card-title">Вода</div><div class="cal-water"><b>${waterAmount}</b><span>/ ${waterGoal} мл</span><em>${waterPct}%</em></div><div class="cal-water-bar"><i style="width:${waterPct}%"></i></div></div>`;
+  if(dayNutr.length&&dayDiary.length){const spent=dayDiary.reduce((s,d)=>s+(Number(d.kcal)||0),0),balance=totalKcal-spent;html+=`<div class="cal-day-card cal-balance"><div class="cal-day-card-title">Баланс дня</div><div><span>Потреблено</span><b>${Math.round(totalKcal)} ккал</b></div><div><span>Потрачено</span><b>− ${spent} ккал</b></div><hr><div><strong>Итого</strong><strong class="${balance>0?'plus':'minus'}">${balance>0?'+':''}${Math.round(balance)} ккал</strong></div></div>`}
+  entries.innerHTML=html;if(detail)detail.style.display=html?'block':'none';
+}
+window.showCalDay=showCalDay;
+
+function toggleCalFood(id,button){const body=document.getElementById(id);if(!body)return;const open=body.classList.toggle('open');button.classList.toggle('open',open)}
+window.toggleCalFood=toggleCalFood;
+
+function openCalAddSheet(dateStr) {
+  // Этот вызов теперь ниоткуда не происходит, но оставляем заглушку
+  toast('Добавление тренировки через календарь отключено');
+}
+window.openCalAddSheet = openCalAddSheet;
+
+function delDiaryFromCal(id, dateStr) {
+  if (!confirm('Удалить эту тренировку?')) return;
+  diary = diary.filter(e => e.id !== id);
+  localStorage.setItem('fs-diary', JSON.stringify(diary));
+  renderCalendar();
+  setTimeout(() => showCalDay(dateStr), 50);
+  toast('🗑 Тренировка удалена');
+}
+window.delDiaryFromCal = delDiaryFromCal;
+
+function editDiaryFromCal(id, dateStr) {
+  const entry = diary.find(e => e.id === id);
+  if (!entry) return;
+  window._editCalId = id;
+  window._editCalDateStr = dateStr;
+  document.getElementById('cal-edit-type').value = entry.type || '';
+  document.getElementById('cal-edit-exercises').value = (entry.exercises || '').replace(/<br>/g, '\n');
+  document.getElementById('cal-edit-overlay').style.display = 'flex';
+}
+window.editDiaryFromCal = editDiaryFromCal;
+
+function saveCalEdit() {
+  const id = window._editCalId;
+  const dateStr = window._editCalDateStr;
+  const idx = diary.findIndex(e => e.id === id);
+  if (idx === -1) return;
+  const d = diary[idx];
+  d.type = document.getElementById('cal-edit-type').value.trim() || d.type;
+  d.exercises = document.getElementById('cal-edit-exercises').value.trim();
+  localStorage.setItem('fs-diary', JSON.stringify(diary));
+  closeCalEdit();
+  renderCalendar();
+  setTimeout(() => showCalDay(dateStr), 50);
+  toast('✅ Тренировка обновлена');
+}
+window.saveCalEdit = saveCalEdit;
+
+function closeCalEdit() {
+  document.getElementById('cal-edit-overlay').style.display = 'none';
+}
+window.closeCalEdit = closeCalEdit;
+
+// ==================== ЭНЦИКЛОПЕДИЯ ====================
+
+
+// Голосовой поиск в справочнике: упражнения и продукты.
+let knowledgeVoiceRecognition = null;
+let knowledgeVoiceButton = null;
+
+function startKnowledgeVoice(inputId, renderFunction, button) {
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRecognition) {
+    toast('Голосовой поиск не поддерживается этим браузером');
+    return;
+  }
+
+  if (knowledgeVoiceRecognition) {
+    try { knowledgeVoiceRecognition.stop(); } catch (e) {}
+    return;
+  }
+
+  const input = document.getElementById(inputId);
+  if (!input) return;
+
+  knowledgeVoiceButton = button;
+  knowledgeVoiceRecognition = new SpeechRecognition();
+  knowledgeVoiceRecognition.lang = 'ru-RU';
+  knowledgeVoiceRecognition.continuous = false;
+  knowledgeVoiceRecognition.interimResults = false;
+  knowledgeVoiceRecognition.maxAlternatives = 1;
+
+  knowledgeVoiceRecognition.onstart = function () {
+    button.classList.add('listening');
+  };
+
+  knowledgeVoiceRecognition.onresult = function (event) {
+    const text = event.results[0][0].transcript.trim();
+    input.value = text;
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    if (typeof window[renderFunction] === 'function') window[renderFunction]();
+    if (typeof showVoiceResult === 'function') showVoiceResult(text);
+  };
+
+  knowledgeVoiceRecognition.onerror = function (event) {
+    if (event.error !== 'no-speech' && event.error !== 'aborted') {
+      toast(event.error === 'not-allowed' ? 'Нет доступа к микрофону' : 'Не удалось распознать голос');
+    }
+  };
+
+  knowledgeVoiceRecognition.onend = function () {
+    if (knowledgeVoiceButton) knowledgeVoiceButton.classList.remove('listening');
+    knowledgeVoiceButton = null;
+    knowledgeVoiceRecognition = null;
+  };
+
+  knowledgeVoiceRecognition.start();
+}
+window.startKnowledgeVoice = startKnowledgeVoice;
+
+let kbFoodFilter = 'all';
+function openKnowledgeSection(section) {
+  document.querySelectorAll('#page-encyclopedia .knowledge-home, #page-encyclopedia .knowledge-panel').forEach(el => el.classList.remove('active'));
+  const target = document.getElementById(section === 'home' ? 'knowledge-home' : 'knowledge-' + section);
+  if (target) target.classList.add('active');
+  if (section === 'exercises') renderEncyclopedia();
+  if (section === 'foods') renderKnowledgeFoods();
+  const scroller=document.querySelector('.scroll-area'); if(scroller) scroller.scrollTop=0;
+}
+window.openKnowledgeSection=openKnowledgeSection;
+function clearEncSearch(){const i=document.getElementById('enc-search');if(i){i.value='';i.focus();renderEncyclopedia();}}
+window.clearEncSearch=clearEncSearch;
+function foodCategory(f){const n=String(f.n||'').toLowerCase();if(/куриц|индейк|говядин|свинин|рыб|тунц|семг|минта|кревет|кальмар|творог|яйц/.test(n))return'protein';if(/огур|помидор|капуст|морков|свекл|броккол|кабач|лук/.test(n))return'vegetables';if(/яблок|банан|апельсин|виноград|груш|черник|клубник/.test(n))return'fruit';if(/овся|греч|рис|макарон|булгур|перлов|кускус|пшено|хлеб|лаваш|картоф/.test(n))return'carbs';if(/орех|миндал|арахис|масло/.test(n))return'fats';return'other';}
+const KB_FOOD_FILTERS={all:'Все',protein:'Белковые',vegetables:'Овощи',fruit:'Фрукты',carbs:'Крупы и хлеб',fats:'Орехи и жиры',other:'Другое'};
+function filterKnowledgeFoods(cat){kbFoodFilter=cat;renderKnowledgeFoods();}
+window.filterKnowledgeFoods=filterKnowledgeFoods;
+function clearKnowledgeFoodSearch(){const i=document.getElementById('kb-food-search');if(i){i.value='';i.focus();renderKnowledgeFoods();}}
+window.clearKnowledgeFoodSearch=clearKnowledgeFoodSearch;
+;
+function renderKnowledgeFoods(){const list=document.getElementById('kb-food-list'),countEl=document.getElementById('kb-food-count'),input=document.getElementById('kb-food-search');if(!list)return;const q=(input?.value||'').toLowerCase().trim(),foods=window.FOOD_DB||FOOD_DB||[];const found=foods.map((f,i)=>({f,i})).filter(x=>(kbFoodFilter==='all'||foodCategory(x.f)===kbFoodFilter)&&(!q||x.f.n.toLowerCase().includes(q)));list.innerHTML=found.map(({f,i})=>`<div class="knowledge-item food"><div><b>${f.n}</b><small>${f.kcal} ккал · Б ${f.p} · Ж ${f.f} · У ${f.c} <em>на ${f.unit}</em></small></div></div>`).join('')||'<div class="knowledge-empty">Ничего не найдено. Измени запрос или фильтр.</div>';if(countEl)countEl.textContent=found.length;const filters=document.getElementById('kb-food-filters');if(filters)filters.innerHTML=Object.entries(KB_FOOD_FILTERS).map(([k,v])=>`<button class="knowledge-chip ${kbFoodFilter===k?'active':''}" onclick="filterKnowledgeFoods('${k}')">${v}</button>`).join('');}
+window.renderKnowledgeFoods=renderKnowledgeFoods;
+
+let encCat = 'all';
+let favExs = new Set(JSON.parse(localStorage.getItem('fs-fav-exs') || '[]'));
+
+function filterEnc(cat, btn) {
+  encCat = cat;
+  document.querySelectorAll('.enc-filter-btn').forEach(b => b.classList.remove('enc-filter-active'));
+  if (btn) btn.classList.add('enc-filter-active');
+  renderEncyclopedia();
+}
+window.filterEnc = filterEnc;
+
+function renderEncyclopedia() {
+  const q = (document.getElementById('enc-search')?.value || '').toLowerCase().trim();
+  const listEl = document.getElementById('enc-list');
+  const countEl = document.getElementById('enc-count');
+  if (!listEl) return;
+
+  let out = '';
+  let count = 0;
+
+  for (const [cat, exs] of Object.entries(ALL_EXERCISES)) {
+    if (encCat !== 'all' && encCat !== 'favs' && encCat !== cat) continue;
+    for (let i = 0; i < exs.length; i++) {
+      const e = exs[i];
+      const favKey = `${cat}-${i}`;
+      if (encCat === 'favs' && !favExs.has(favKey)) continue;
+      if (q && !e.n.toLowerCase().includes(q)) continue;
+      const isFav = favExs.has(favKey);
+
+      out += `
+        <div class="enc-item" style="display:flex; align-items:center; padding:12px 0; border-bottom:1px solid var(--border);">
+          <div style="flex:1; font-weight:600; font-size:16px;">${e.n}</div>
+<button onclick="toggleFav('${favKey}')" style="background:none;border:none;cursor:pointer;font-size:1.4rem;padding:0 4px;line-height:1;color:${isFav ? '#ef4444' : 'var(--text-muted)'};">${isFav ? '❤️' : '🤍'}</button>
+        </div>
+      `;
+      count++;
+    }
+  }
+
+  if (count === 0) out = '<div style="text-align:center;padding:30px;color:var(--text-muted)">Ничего не найдено 🔍</div>';
+  listEl.innerHTML = out;
+  if (countEl) countEl.textContent = count + ' упражнений';
+
+  if (listEl) {
+    listEl.style.marginTop = '0';
+    listEl.style.paddingTop = '0';
+  }
+
+  const scrollArea = document.querySelector('.scroll-area');
+  if (scrollArea) {
+    scrollArea.scrollTop = 0;
+    scrollArea.scrollTo(0, 0);
+  }
+  window.scrollTo(0, 0);
+
+  const filterContainer = document.getElementById('enc-filter-btns');
+  if (filterContainer) {
+    const cats = Object.keys(ALL_EXERCISES);
+    const categoryLabels = {
+      chest: 'Грудные', back: 'Спина', legs: 'Ноги', shoulders: 'Плечи',
+      biceps: 'Бицепс', triceps: 'Трицепс', glutes: 'Ягодицы',
+      abs: 'Пресс', forearms: 'Предплечья', cardio: 'Кардио'
+    };
+    filterContainer.innerHTML = `
+      <div style="font-weight:700; margin-bottom:8px; font-size:16px; color:var(--text);">Тексты</div>
+      <button class="enc-filter-btn ${encCat === 'all' ? 'enc-filter-active' : ''}" onclick="filterEnc('all',this)">Все</button>
+      ${cats.map(cat => `<button class="enc-filter-btn ${encCat === cat ? 'enc-filter-active' : ''}" onclick="filterEnc('${cat}',this)">${categoryLabels[cat] || cat}</button>`).join('')}
+      <button class="enc-filter-btn ${encCat === 'favs' ? 'enc-filter-active' : ''}" onclick="filterEnc('favs',this)">❤️ Избранное</button>
+    `;
+  }
+
+  const searchInput = document.getElementById('enc-search');
+  if (searchInput) searchInput.blur();
+}
+window.renderEncyclopedia = renderEncyclopedia;
+
+function toggleEncCard(id) {
+  // заглушка
+}
+window.toggleEncCard = toggleEncCard;
+
+function toggleFav(favKey) {
+  if (favExs.has(favKey)) favExs.delete(favKey);
+  else favExs.add(favKey);
+  localStorage.setItem('fs-fav-exs', JSON.stringify([...favExs]));
+  renderEncyclopedia();
+  toast(favExs.has(favKey) ? '❤️ Добавлено в избранное' : '🤍 Убрано из избранного');
+}
+window.toggleFav = toggleFav;
+
+// ==================== ПИТАНИЕ ====================
+let nutrEntries = JSON.parse(localStorage.getItem('fs-nutrition') || '[]');
+
+function renderNutrEntries() {
+  const _baseDate = new Date();
+  _baseDate.setDate(_baseDate.getDate() + (window._nutrOffset || 0));
+  const today = _baseDate.toLocaleDateString('ru-RU');
+  const todayEntries = nutrEntries.filter(e => e.date === today);
+
+  // Обновляем секции приёмов пищи
+  const mealTypes = ['breakfast','lunch','dinner','snack'];
+  mealTypes.forEach(function(mt) {
+    const items = todayEntries.filter(e => (e.mealType || 'breakfast') === mt);
+    const kcalTotal = items.reduce((s, e) => s + (+e.kcal || 0), 0);
+    const kcalEl = document.getElementById('meal-kcal-' + mt);
+    if (kcalEl) kcalEl.textContent = Math.round(kcalTotal) + ' ккал';
+    const listEl = document.getElementById('meal-items-' + mt);
+    if (!listEl) return;
+    if (!items.length) {
+      listEl.innerHTML = '<div class="meal-empty">Нет записей</div>';
+      return;
+    }
+    listEl.innerHTML = items.map(function(e) {
+      return '<div class="meal-item" onclick="editNutrEntry(\'' + e.id + '\')">' +
+        '<div class="meal-item-info">' +
+          '<div class="meal-item-name">' + e.name + '</div>' +
+          '<div class="meal-item-meta">' + Math.round(e.kcal) + ' ккал' + (e.grams ? ' · ' + e.grams + ' г' : '') + ' · Б:' + (+parseFloat(e.protein).toFixed(1)) + ' · У:' + (+parseFloat(e.carbs).toFixed(1)) + ' · Ж:' + (+parseFloat(e.fat).toFixed(1)) + '</div>' +
+        '</div>' +
+        '<button onclick="event.stopPropagation();removeNutrEntryById(\'' + e.id + '\')" class="meal-item-del">✕</button>' +
+      '</div>';
+    }).join('');
+  });
+
+  const totals = todayEntries.reduce((a, e) => ({
+    kcal:    a.kcal    + (+e.kcal    || 0),
+    protein: a.protein + (+e.protein || 0),
+    carbs:   a.carbs   + (+e.carbs   || 0),
+    fat:     a.fat     + (+e.fat     || 0)
+  }), { kcal: 0, protein: 0, carbs: 0, fat: 0 });
+
+  /* ---- new card update ---- */
+  const _pr = JSON.parse(localStorage.getItem('fs-profile') || '{}');
+  let _kGoal = 2000;
+
+  if (_pr.weight) {
+    const _bmr = (typeof calcBMR === 'function')
+      ? calcBMR(_pr)
+      : (() => {
+          const _w = Number(_pr.weight) || 75;
+          const _h = Number(_pr.height) || 175;
+          const _a = Number(_pr.age) || 25;
+          const _base = 10 * _w + 6.25 * _h - 5 * _a;
+          let _res = (_pr.gender === 'male') ? _base + 5 : _base - 161;
+          if (_a > 60) _res = Math.round(_res * (1 - Math.min(_a - 60, 30) / 300));
+          return _res;
+        })();
+
+    const _activity = Number(_pr.activity) || 1.55;
+    const _baseTdee = Math.round(_bmr * _activity);
+    const _exp = parseFloat(_pr.exp || 0);
+    const _coach = _pr.coach || 'no';
+    const _expFactors = { 0: 0.97, 0.5: 0.98, 1: 1.00, 2: 1.02, 3: 1.04, 5: 1.06 };
+    let _expFactor = _expFactors[_exp] !== undefined ? _expFactors[_exp] : 1.00;
+
+    if (_coach === 'now' || _coach === 'past') _expFactor = Math.min(_expFactor + 0.01, 1.07);
+
+    _kGoal = Math.round(_baseTdee * _expFactor);
+
+    const _ageV = Number(_pr.age) || 25;
+    if (_pr.goal === 'loss') _kGoal -= (_ageV > 55 ? 300 : 400);
+    if (_pr.goal === 'gain') _kGoal += (_ageV > 55 ? 200 : 300);
+    _kGoal = Math.max(1200, _kGoal);
+  }
+
+  const _ageNorm = Number(_pr.age) || 25;
+  const _protPerKg = _ageNorm > 55
+    ? (_pr.goal === 'gain' ? 2.4 : 2.0)
+    : (_pr.goal === 'gain' ? 2.2 : 1.8);
+  const _pGoal = Math.round((+(_pr.weight||70)) * _protPerKg);
+  const _fGoal = Math.round(_kGoal * 0.25 / 9);
+  const _cGoal = Math.max(0, Math.round((_kGoal - _pGoal*4 - _fGoal*9) / 4));
+  const _cons  = Math.round(totals.kcal);
+  const _left  = Math.max(0, _kGoal - _cons);
+  const _s = (id,v) => { const e=document.getElementById(id); if(e) e.textContent=v; };
+  _s('nutr-consumed',  _cons);
+  _s('nutr-remaining', _left);
+  _s('nutr-goal-kcal', _kGoal);
+  // Gauge 240°: длина дуги = (240/360)*2π*90 ≈ 377
+  const _GARC = 377;
+  const _arc = document.getElementById('nutr-arc-main');
+  if (_arc) {
+    const _pct = Math.min(1, _kGoal > 0 ? _cons / _kGoal : 0);
+    const _len = (_pct * _GARC).toFixed(1);
+    _arc.setAttribute('stroke-dasharray', _len + ' ' + _GARC);
+    // Два цвета: зелёный — в норме, красный — свыше нормы
+    _arc.setAttribute('stroke', _cons > _kGoal ? '#ef4444' : '#22c55e');
+  }
+  // Метка под числом
+  const _lbl = document.getElementById('nutr-gauge-label');
+  if (_lbl) {
+    const _over = _cons > _kGoal;
+    _lbl.textContent = _over ? 'Свыше нормы' : ('Осталось ' + _left + ' ккал');
+    _lbl.style.color = _over ? '#ef4444' : 'var(--text-light)';
+  }
+  const _bar = (cId,gId,bId,cur,goal) => {
+    _s(cId, Math.round(cur)); _s(gId, goal);
+    const b=document.getElementById(bId);
+    if(b) b.style.width = Math.min(100, goal>0?(cur/goal*100):0).toFixed(1)+'%';
+  };
+  _bar('carbs-current','carbs-goal-val','carbs-bar', totals.carbs,   _cGoal);
+  _bar('prot-current', 'prot-goal-val', 'prot-bar',  totals.protein, _pGoal);
+  _bar('fat-current',  'fat-goal-val',  'fat-bar',   totals.fat,     _fGoal);
+
+  // date label
+  const _dlbl = document.getElementById('nutr-date-label');
+  if (_dlbl) {
+    const _off = window._nutrOffset || 0;
+    if (_off === 0) {
+      _dlbl.textContent = '📅 СЕГОДНЯ';
+    } else {
+      const _d = new Date(); _d.setDate(_d.getDate() + _off);
+      const _mn = ['ЯНВ','ФЕВ','МАР','АПР','МАЙ','ИЮН','ИЮЛ','АВГ','СЕН','ОКТ','НОЯ','ДЕК'];
+      _dlbl.textContent = '📅 ' + _d.getDate() + ' ' + _mn[_d.getMonth()];
+    }
+  }
+
+  // burned calories (from workout diary for today)
+  const _burnedEl = document.getElementById('nutr-burned');
+  if (_burnedEl) {
+    const _todayStr = new Date().toLocaleDateString('ru-RU');
+    const _burned = (typeof diary !== 'undefined' ? diary : [])
+      .filter(e => e.date && (e.date === _todayStr || e.date.startsWith(_todayStr)))
+      .reduce((s, e) => s + (Number(e.kcal) || 0), 0);
+    _burnedEl.textContent = _burned;
+  }
+
+  // slide 2 — fill nutr-extra bars based on current macros (estimated)
+  const _fillExtra = (id, val, maxVal) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = Math.round(val);
+    const fills = document.querySelectorAll('.nutr-bar-fill');
+    const extras = ['nutr-fiber','nutr-sugar','nutr-sodium','nutr-chol','nutr-pot'];
+    const idx = extras.indexOf(id);
+    if (idx >= 0 && fills[idx]) {
+      const pct = maxVal > 0 ? Math.min(100, val / maxVal * 100) : 0;
+      fills[idx].dataset.pct = pct.toFixed(1);
+      if (window.nutrSlide === 1) fills[idx].style.width = pct.toFixed(1) + '%';
+    }
+  };
+  _fillExtra('nutr-fiber',  totals.carbs * 0.15,       37);
+  _fillExtra('nutr-sugar',  totals.carbs * 0.40,       65);
+  _fillExtra('nutr-sodium', totals.kcal  * 1.0,      2300);
+  _fillExtra('nutr-chol',   totals.fat   * 1.5,       300);
+  _fillExtra('nutr-pot',    totals.kcal  * 0.5,      3500);
+  // Render recipe & plan cards
+  if (typeof renderRecipesCard === 'function') renderRecipesCard();
+  if (typeof renderNutrPlansCard === 'function') renderNutrPlansCard();
+}
+
+function addNutrEntry(mealType) {
+  const name = document.getElementById('nutr-meal-name').value.trim() || 'Блюдо';
+  const kcal    = parseFloat(document.getElementById('nutr-kcal').value)    || 0;
+  const protein = parseFloat(document.getElementById('nutr-protein').value) || 0;
+  const carbs   = parseFloat(document.getElementById('nutr-carbs').value)   || 0;
+  const fat     = parseFloat(document.getElementById('nutr-fat').value)     || 0;
+  nutrEntries.push({
+    id: Date.now() + '_' + Math.random().toString(36).slice(2),
+    name,
+    kcal: Math.round(kcal),
+    protein: +protein.toFixed ? +protein.toFixed(1) : +protein,
+    carbs:   +carbs.toFixed   ? +carbs.toFixed(1)   : +carbs,
+    fat:     +fat.toFixed     ? +fat.toFixed(1)      : +fat,
+    mealType: mealType || window._currentMealType || 'breakfast',
+    date: (function(){ var d=new Date(); d.setDate(d.getDate()+(window._nutrOffset||0)); return d.toLocaleDateString('ru-RU'); })()
+  });
+  localStorage.setItem('fs-nutrition', JSON.stringify(nutrEntries));
+  ['nutr-meal-name', 'nutr-kcal', 'nutr-protein', 'nutr-carbs', 'nutr-fat'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+  renderNutrEntries();
+}
+window.addNutrEntry = addNutrEntry;
+
+function removeNutrEntry(idx) {
+  if (!confirm('Удалить этот приём пищи?')) return;
+  const today = new Date().toLocaleDateString('ru-RU');
+  let todayEntries = nutrEntries.filter(e => e.date === today);
+  const removed = todayEntries[idx];
+  if (!removed) return;
+  if (!confirm('Удалить запись «' + removed.name + '»?')) return;
+  if (removed.id) {
+    nutrEntries = nutrEntries.filter(e => e.id !== removed.id);
+  } else {
+    let once = false;
+    nutrEntries = nutrEntries.filter(e => {
+      if (!once && e.name === removed.name && e.kcal === removed.kcal && e.date === removed.date) {
+        once = true;
+        return false;
+      }
+      return true;
+    });
+  }
+  localStorage.setItem('fs-nutrition', JSON.stringify(nutrEntries));
+  renderNutrEntries();
+  toast('🗑 Запись удалена');
+}
+window.removeNutrEntry = removeNutrEntry;
+
+function removeNutrEntryById(id) {
+  if (!confirm('Удалить запись?')) return;
+  nutrEntries = nutrEntries.filter(e => e.id !== id);
+  localStorage.setItem('fs-nutrition', JSON.stringify(nutrEntries));
+  renderNutrEntries();
+  toast('🗑 Запись удалена');
+}
+window.removeNutrEntryById = removeNutrEntryById;
+
+// Открыть food picker для конкретного приёма пищи
+function openMealPicker(mealType) {
+  window._currentMealType = mealType;
+  openFoodPicker();
+}
+window.openMealPicker = openMealPicker;
+
+// Показывает bottom sheet выбора приёма пищи (для CTA кнопки)
+function openMealPickerSheet() {
+  var existing = document.getElementById('meal-picker-sheet');
+  if (existing) {
+    document.getElementById('meal-picker-overlay').classList.add('show');
+    existing.classList.add('show');
+    return;
+  }
+  var ov = document.createElement('div');
+  ov.id = 'meal-picker-overlay';
+  ov.className = 'sheet-overlay';
+  ov.onclick = closeMealPickerSheet;
+  document.body.appendChild(ov);
+
+  var sh = document.createElement('div');
+  sh.id = 'meal-picker-sheet';
+  sh.className = 'bottom-sheet';
+  sh.innerHTML = '<div class="sheet-handle"></div>' +
+    '<div class="sheet-title">Куда добавить?</div>' +
+    '<div style="display:flex;flex-direction:column;gap:10px;" id="meal-pick-list"></div>';
+  document.body.appendChild(sh);
+
+  var meals = [
+    {id:'breakfast', icon:'🌅', label:'Завтрак'},
+    {id:'lunch',     icon:'☀️',  label:'Обед'},
+    {id:'dinner',    icon:'🌙', label:'Ужин'},
+    {id:'snack',     icon:'🍎', label:'Перекус'}
+  ];
+  var list = sh.querySelector('#meal-pick-list');
+  meals.forEach(function(m) {
+    var btn = document.createElement('button');
+    btn.className = 'meal-pick-sheet-btn';
+    btn.innerHTML = '<span>' + m.icon + '</span> ' + m.label;
+    btn.addEventListener('click', function() {
+      closeMealPickerSheet();
+      openMealPicker(m.id);
+    });
+    list.appendChild(btn);
+  });
+
+  setTimeout(function() {
+    sh.style.transform = 'translateY(0)';
+    ov.classList.add('show');
+    sh.classList.add('show');
+    attachGramsSheetGestures();
+    var inp = document.getElementById('grams-input');
+    if (inp) {
+      inp.addEventListener('focus', function() { try { inp.select(); } catch(e){} }, {once:true});
+    }
+  }, 10);
+}
+window.openMealPickerSheet = openMealPickerSheet;
+
+function closeMealPickerSheet() {
+  var ov = document.getElementById('meal-picker-overlay');
+  var sh = document.getElementById('meal-picker-sheet');
+  if (ov) ov.classList.remove('show');
+  if (sh) sh.classList.remove('show');
+}
+window.closeMealPickerSheet = closeMealPickerSheet;
+
+// Переключение секций приёмов пищи
+function toggleMealSection(mt) {
+  const items = document.getElementById('meal-items-' + mt);
+  const arrow = document.getElementById('meal-arrow-' + mt);
+  if (!items) return;
+  const isOpen = items.classList.contains('open');
+  items.classList.toggle('open', !isOpen);
+  if (arrow) arrow.style.transform = isOpen ? 'rotate(0deg)' : 'rotate(90deg)';
+}
+window.toggleMealSection = toggleMealSection;
+
+// ==================== ГОТОВЫЙ ПЛАН ПИТАНИЯ ====================
+const NUTRITION_PLAN_2626 = {
+  title: 'Рацион 2626 ккал (6 приёмов)',
+  meals: [
+    {
+      time: '08:00', meal_type: 'Завтрак',
+      items: [
+        { name: 'Овсяная каша на молоке', weight_g: 250, protein: 8.8, fat: 8.0, carbs: 37.5, kcal: 255 },
+        { name: 'Яйцо куриное', weight_g: 110, protein: 14.3, fat: 12.5, kcal: 172, carbs: 0.7 },
+        { name: 'Банан', weight_g: 120, protein: 1.8, fat: 0.1, carbs: 25.2, kcal: 108 },
+        { name: 'Масло сливочное', weight_g: 10, protein: 0.1, fat: 8.2, carbs: 0.1, kcal: 75 }
+      ]
+    },
+    {
+      time: '11:30', meal_type: 'Перекус',
+      items: [
+        { name: 'Творог 5%', weight_g: 150, protein: 25.5, fat: 7.5, carbs: 2.7, kcal: 181 },
+        { name: 'Мёд', weight_g: 15, protein: 0.1, fat: 0.0, carbs: 12.0, kcal: 49 },
+        { name: 'Грецкий орех', weight_g: 15, protein: 2.3, fat: 9.8, carbs: 1.1, kcal: 98 }
+      ]
+    },
+    {
+      time: '14:00', meal_type: 'Обед',
+      items: [
+        { name: 'Куриная грудка', weight_g: 150, protein: 34.7, fat: 1.8, carbs: 0.0, kcal: 165 },
+        { name: 'Гречневая каша отварная', weight_g: 250, protein: 9.8, fat: 2.0, carbs: 49.8, kcal: 253 },
+        { name: 'Помидор свежий', weight_g: 80, protein: 0.5, fat: 0.2, carbs: 3.4, kcal: 16 },
+        { name: 'Огурец свежий', weight_g: 80, protein: 0.6, fat: 0.1, carbs: 2.4, kcal: 12 },
+        { name: 'Перец болгарский', weight_g: 80, protein: 0.8, fat: 0.1, carbs: 4.3, kcal: 22 },
+        { name: 'Масло оливковое', weight_g: 15, protein: 0.0, fat: 14.9, carbs: 0.0, kcal: 135 }
+      ]
+    },
+    {
+      time: '17:00', meal_type: 'Полдник',
+      items: [
+        { name: 'Хлебцы цельнозерновые', weight_g: 25, protein: 2.3, fat: 0.3, carbs: 18.0, kcal: 85 },
+        { name: 'Сыр Российский', weight_g: 50, protein: 11.6, fat: 14.8, carbs: 0.0, kcal: 182 },
+        { name: 'Яблоко зелёное', weight_g: 150, protein: 0.6, fat: 0.6, carbs: 14.7, kcal: 71 }
+      ]
+    },
+    {
+      time: '19:30', meal_type: 'Ужин',
+      items: [
+        { name: 'Горбуша запечённая', weight_g: 150, protein: 31.5, fat: 10.5, carbs: 0.0, kcal: 222 },
+        { name: 'Картофель отварной', weight_g: 200, protein: 4.0, fat: 0.8, carbs: 33.4, kcal: 164 },
+        { name: 'Спаржа тушёная', weight_g: 150, protein: 2.9, fat: 0.2, carbs: 4.8, kcal: 30 },
+        { name: 'Сметана 10%', weight_g: 20, protein: 0.6, fat: 2.0, carbs: 0.6, kcal: 23 }
+      ]
+    },
+    {
+      time: '22:00', meal_type: 'На ночь (казеин)',
+      items: [
+        { name: 'Кефир 1%', weight_g: 250, protein: 7.5, fat: 2.5, carbs: 9.5, kcal: 100 },
+        { name: 'Отруби ржаные', weight_g: 10, protein: 1.1, fat: 0.3, carbs: 3.2, kcal: 19 }
+      ]
+    }
+  ]
+};
+
+function loadNutritionPlan() {
+  if (!confirm('Загрузить готовый план «' + NUTRITION_PLAN_2626.title + '» на сегодня?\nВсе продукты будут добавлены в дневник питания за сегодня.')) return;
+  const today = new Date().toLocaleDateString('ru-RU');
+  let added = 0;
+  NUTRITION_PLAN_2626.meals.forEach(meal => {
+    meal.items.forEach(item => {
+      nutrEntries.push({
+        id: Date.now() + '_' + Math.random().toString(36).slice(2),
+        name: meal.time + ' ' + meal.meal_type + ': ' + item.name + ' (' + item.weight_g + 'г)',
+        kcal: item.kcal,
+        protein: item.protein,
+        carbs: item.carbs,
+        fat: item.fat,
+        date: today
+      });
+      added++;
+    });
+  });
+  localStorage.setItem('fs-nutrition', JSON.stringify(nutrEntries));
+  renderNutrEntries();
+  toast('✅ Добавлено ' + added + ' продуктов из плана!');
+}
+window.loadNutritionPlan = loadNutritionPlan;
+
+// ==================== БАЗА ПРОДУКТОВ: ВЫБОР ====================
+function openFoodPicker() {
+  document.getElementById('food-picker-sheet').classList.add('show');
+  document.getElementById('sheet-overlay').classList.add('show');
+  document.getElementById('food-search').value = '';
+  renderFoodPicker();
+}
+window.openFoodPicker = openFoodPicker;
+
+function renderFoodPicker() {
+  const q = document.getElementById('food-search')?.value || '';
+  const results = q.length >= 2 ? searchFoodDB(q) : [];
+  const container = document.getElementById('food-picker-list');
+  if (!container) return;
+  if (!results.length) {
+    container.innerHTML = '<div style="text-align:center;color:var(--text-light);padding:20px;">' +
+      (q.length>=2 ? 'Ничего не найдено' : 'Введите хотя бы 2 символа') +
+      '</div>';
+    return;
+  }
+  container.innerHTML = results.map(f => `
+    <div class="food-pick-item" onclick="applyFoodItem('${f.n}')" style="cursor:pointer; padding:12px 0; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center;">
+      <div>
+        <div style="font-weight:600; font-size:14px;">${f.n}</div>
+        <div style="font-size:11px; color:var(--text-light);">${f.kcal} ккал · Б:${f.p} · У:${f.c} · Ж:${f.f} (на ${f.unit})</div>
+      </div>
+      <span style="color:var(--accent); font-weight:600;">+</span>
+    </div>
+  `).join('');
+}
+window.renderFoodPicker = renderFoodPicker;
+
+function applyFoodItem(name) {
+  const item = FOOD_DB.find(f => f.n === name);
+  if (!item) return;
+  closeAllSheets();
+  openGramsSheet({ name: item.n, kcal100: item.kcal, p100: item.p, c100: item.c, f100: item.f }, null);
+}
+window.applyFoodItem = applyFoodItem;
+
+// Открыть шторку редактирования граммов
+function openGramsSheet(item100, entryId) {
+  window._gramsItem    = item100;
+  window._gramsEntryId = entryId;
+
+  const existing = entryId ? nutrEntries.find(e => e.id === entryId) : null;
+  const grams = existing ? (existing.grams || 100) : 100;
+
+  let ov = document.getElementById('grams-overlay');
+  let sh = document.getElementById('grams-sheet');
+  if (!ov) {
+    ov = document.createElement('div');
+    ov.id = 'grams-overlay';
+    ov.className = 'sheet-overlay';
+    ov.onclick = closeGramsSheet;
+    document.body.appendChild(ov);
+    sh = document.createElement('div');
+    sh.id = 'grams-sheet';
+    sh.className = 'bottom-sheet';
+    document.body.appendChild(sh);
+  }
+
+  sh.innerHTML = buildGramsSheetHTML(item100, grams);
+  recalcGrams(grams);
+
+  setTimeout(function() {
+    sh.style.transform = 'translateY(0)';
+    ov.classList.add('show');
+    sh.classList.add('show');
+    attachGramsSheetGestures();
+    var inp = document.getElementById('grams-input');
+    if (inp) {
+      inp.addEventListener('focus', function() { try { inp.select(); } catch(e){} }, {once:true});
+    }
+  }, 10);
+}
+window.openGramsSheet = openGramsSheet;
+
+function attachGramsSheetGestures() {
+  var sh = document.getElementById('grams-sheet');
+  if (!sh || sh._gramsGesturesAttached) return;
+  sh._gramsGesturesAttached = true;
+
+  var startY = 0;
+  var currentY = 0;
+  var dragging = false;
+
+  sh.addEventListener('touchstart', function(e) {
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'BUTTON') return;
+    var t = e.touches ? e.touches[0] : e;
+    startY = t.clientY;
+    currentY = startY;
+    dragging = true;
+    sh.style.transition = 'none';
+  }, { passive: true });
+
+  sh.addEventListener('touchmove', function(e) {
+    if (!dragging) return;
+    var t = e.touches ? e.touches[0] : e;
+    currentY = t.clientY;
+    var delta = currentY - startY;
+
+    if (delta > 0) {
+      sh.style.transform = 'translateY(' + delta + 'px)';
+    }
+    if (e.cancelable) e.preventDefault();
+    e.stopPropagation();
+  }, { passive: false });
+
+  sh.addEventListener('touchend', function(e) {
+    if (!dragging) return;
+    dragging = false;
+    var delta = currentY - startY;
+    sh.style.transition = 'transform 0.25s cubic-bezier(0.32,0.72,0,1)';
+
+    if (delta > 80) {
+      sh.style.transform = 'translateY(100%)';
+      setTimeout(closeGramsSheet, 200);
+    } else {
+      sh.style.transform = 'translateY(0)';
+    }
+  });
+}
+
+function buildGramsSheetHTML(item, grams) {
+  return '<div class="sheet-handle"></div>' +
+    '<div class="grams-sheet-name">' + item.name + '</div>' +
+    '<div class="grams-sheet-sub">на 100 г: ' + item.kcal100 + ' ккал · Б:' + item.p100 + ' · У:' + item.c100 + ' · Ж:' + item.f100 + '</div>' +
+
+    '<div class="grams-donut-wrap">' +
+      '<svg class="grams-donut-svg" viewBox="0 0 120 120">' +
+        '<circle cx="60" cy="60" r="50" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="10"/>' +
+        '<circle id="grams-arc" cx="60" cy="60" r="50" fill="none" stroke="var(--accent)" stroke-width="10"' +
+          ' stroke-linecap="round" stroke-dasharray="0 314" style="transition:stroke-dasharray 0.3s;transform:rotate(-90deg);transform-origin:center"/>' +
+      '</svg>' +
+      '<div class="grams-donut-inner">' +
+        '<div class="grams-kcal-val" id="grams-kcal">0</div>' +
+        '<div class="grams-kcal-lbl">ккал</div>' +
+      '</div>' +
+    '</div>' +
+
+    '<div class="grams-macros">' +
+      '<div class="grams-macro p"><div class="grams-macro-val" id="grams-prot">0</div><div class="grams-macro-lbl">Белки, г</div></div>' +
+      '<div class="grams-macro f"><div class="grams-macro-val" id="grams-fat">0</div><div class="grams-macro-lbl">Жиры, г</div></div>' +
+      '<div class="grams-macro c"><div class="grams-macro-val" id="grams-carb">0</div><div class="grams-macro-lbl">Углеводы, г</div></div>' +
+    '</div>' +
+
+    '<div class="grams-ctrl" style="justify-content:center;">' +
+      '<div class="grams-input-wrap">' +
+        '<input id="grams-input" type="number" inputmode="decimal" value="' + grams + '" min="1" max="9999"' +
+          ' oninput="recalcGrams(+this.value||0)">' +
+        '<span class="grams-unit">г</span>' +
+      '</div>' +
+    '</div>' +
+
+    '<button class="grams-save-btn" onclick="saveGramsEntry()">Сохранить</button>';
+}
+
+function recalcGrams(g) {
+  const item = window._gramsItem;
+  if (!item) return;
+  const k = g / 100;
+  const kGoal = 2000;
+  const kcal = Math.round(item.kcal100 * k);
+  const pct  = Math.min(1, kcal / kGoal);
+  const arc  = document.getElementById('grams-arc');
+  if (arc) arc.setAttribute('stroke-dasharray', (pct * 314).toFixed(1) + ' 314');
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+  set('grams-kcal', kcal);
+  set('grams-prot', (+item.p100 * k).toFixed(1));
+  set('grams-fat',  (+item.f100 * k).toFixed(1));
+  set('grams-carb', (+item.c100 * k).toFixed(1));
+}
+window.recalcGrams = recalcGrams;
+
+function stepGrams(delta) {
+  const inp = document.getElementById('grams-input');
+  if (!inp) return;
+  const v = Math.max(1, Math.min(9999, (+inp.value || 100) + delta));
+  inp.value = v;
+  recalcGrams(v);
+}
+window.stepGrams = stepGrams;
+
+function saveGramsEntry() {
+  const inp = document.getElementById('grams-input');
+  const g = Math.max(1, +inp.value || 100);
+  const item = window._gramsItem;
+  const k = g / 100;
+  const kcal    = Math.round(item.kcal100 * k);
+  const protein = +((+item.p100 * k).toFixed(1));
+  const carbs   = +((+item.c100 * k).toFixed(1));
+  const fat     = +((+item.f100 * k).toFixed(1));
+
+  if (window._gramsEntryId) {
+    const idx = nutrEntries.findIndex(e => e.id === window._gramsEntryId);
+    if (idx !== -1) {
+      nutrEntries[idx] = Object.assign({}, nutrEntries[idx], { grams: g, kcal, protein, carbs, fat });
+      localStorage.setItem('fs-nutrition', JSON.stringify(nutrEntries));
+    }
+  } else {
+    document.getElementById('nutr-meal-name').value = item.name;
+    document.getElementById('nutr-kcal').value      = kcal;
+    document.getElementById('nutr-protein').value   = protein;
+    document.getElementById('nutr-carbs').value     = carbs;
+    document.getElementById('nutr-fat').value       = fat;
+    const entry = {
+      id: Date.now() + '_' + Math.random().toString(36).slice(2),
+      name: item.name,
+      kcal, protein, carbs, fat,
+      grams: g,
+      mealType: window._currentMealType || 'breakfast',
+      date: (function(){ var d=new Date(); d.setDate(d.getDate()+(window._nutrOffset||0)); return d.toLocaleDateString('ru-RU'); })()
+    };
+    nutrEntries.push(entry);
+    localStorage.setItem('fs-nutrition', JSON.stringify(nutrEntries));
+  }
+
+  closeGramsSheet();
+  renderNutrEntries();
+  toast('✅ ' + item.name + ' — ' + g + ' г');
+}
+window.saveGramsEntry = saveGramsEntry;
+
+function closeGramsSheet() {
+  const ov = document.getElementById('grams-overlay');
+  const sh = document.getElementById('grams-sheet');
+  if (ov) ov.classList.remove('show');
+  if (sh) {
+    sh.classList.remove('show');
+    sh.style.transition = '';
+    sh.style.transform = 'translateY(100%)';
+    setTimeout(function(){
+      if (sh && !sh.classList.contains('show')) sh.style.transform = '';
+    }, 220);
+  }
+  window._gramsItem = null;
+  window._gramsEntryId = null;
+}
+window.closeGramsSheet = closeGramsSheet;
+
+function editNutrEntry(entryId) {
+  const entry = nutrEntries.find(e => e.id === entryId);
+  if (!entry) return;
+  const dbItem = FOOD_DB.find(f => f.n === entry.name);
+  let item100;
+  if (dbItem) {
+    item100 = { name: dbItem.n, kcal100: dbItem.kcal, p100: dbItem.p, c100: dbItem.c, f100: dbItem.f };
+  } else {
+    const g = entry.grams || 100;
+    const k = 100 / g;
+    item100 = {
+      name: entry.name,
+      kcal100: +(+entry.kcal * k).toFixed(1),
+      p100:    +(+entry.protein * k).toFixed(1),
+      c100:    +(+entry.carbs * k).toFixed(1),
+      f100:    +(+entry.fat * k).toFixed(1)
+    };
+  }
+  window._currentMealType = entry.mealType;
+  openGramsSheet(item100, entryId);
+}
+window.editNutrEntry = editNutrEntry;
+
+// ==================== ГОЛОСОВОЙ ВВОД ====================
+let recognition = null;
+let isListening = false;
+
+function toggleVoice() {
+  if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+    toast('❌ Голосовой ввод не поддерживается в этом браузере');
+    return;
+  }
+  if (isListening) stopVoice();
+  else startVoice();
+}
+window.toggleVoice = toggleVoice;
+
+function startVoice() {
+  const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+  recognition = new SpeechRec();
+  recognition.lang = 'ru-RU';
+  recognition.continuous = false;
+  recognition.interimResults = false;
+  recognition.onstart = () => {
+    isListening = true;
+    document.getElementById('nav-mic-btn').classList.add('listening');
+    showVoiceResult('🎤 Слушаю...');
+  };
+  recognition.onresult = (e) => {
+    const text = e.results[0][0].transcript;
+    handleVoiceResult(text);
+  };
+  recognition.onerror = (e) => {
+    if (e.error === 'not-allowed') toast('❌ Нет доступа к микрофону');
+    else toast('❌ Ошибка: ' + e.error);
+  };
+  recognition.onend = () => {
+    stopVoice();
+  };
+  recognition.start();
+}
+
+function stopVoice() {
+  isListening = false;
+  const btn = document.getElementById('nav-mic-btn');
+  if (btn) btn.classList.remove('listening');
+  if (recognition) {
+    try { recognition.stop(); } catch (e) {}
+    recognition = null;
+  }
+  setTimeout(() => hideVoiceResult(), 2500);
+}
+
+function showVoiceResult(text) {
+  const el = document.getElementById('voice-result');
+  if (el) {
+    el.textContent = text;
+    el.classList.add('show');
+  }
+}
+
+function hideVoiceResult() {
+  const el = document.getElementById('voice-result');
+  if (el) el.classList.remove('show');
+}
+
+function handleVoiceResult(text) {
+  const builderVisible = document.getElementById('wt-builder')?.style.display !== 'none';
+  if (currentPage === 'workout' && builderVisible) {
+    handleVoiceForBuilder(text);
+    return;
+  }
+  if (currentPage === 'nutrition') {
+    handleVoiceForNutrition(text);
+    showVoiceResult('✅ "' + text + '"');
+    return;
+  }
+  const active = document.activeElement;
+  if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) {
+    if (active.type === 'number') {
+      const m = text.match(/(\d+(?:[.,]\d+)?)/);
+      if (m) active.value = m[1].replace(',', '.');
+    } else {
+      active.value = text;
+    }
+    active.dispatchEvent(new Event('input'));
+    showVoiceResult('✅ "' + text + '"');
+    return;
+  }
+  if (currentPage === 'encyclopedia') {
+    const enc = document.getElementById('enc-search');
+    if (enc) {
+      enc.value = text;
+      enc.dispatchEvent(new Event('input'));
+    }
+    showVoiceResult('🔍 "' + text + '"');
+    return;
+  }
+  toast('🎤 "' + text + '"');
+  showVoiceResult('🎤 "' + text + '"');
+}
+
+const WORDS_TO_NUM = {
+  'один':1, 'одного':1, 'одну':1, 'одним':1,
+  'два':2, 'две':2, 'двух':2, 'двумя':2,
+  'три':3, 'трёх':3, 'тремя':3,
+  'четыре':4, 'четырёх':4, 'четырьмя':4,
+  'пять':5, 'пяти':5, 'пятью':5,
+  'шесть':6, 'шести':6, 'шестью':6,
+  'семь':7, 'семи':7, 'семью':7,
+  'восемь':8, 'восьми':8, 'восемью':8,
+  'девять':9, 'девяти':9, 'девятью':9,
+  'десять':10, 'десяти':10, 'десятью':10,
+  'одиннадцать':11, 'двенадцать':12, 'тринадцать':13, 'четырнадцать':14,
+  'пятнадцать':15, 'шестнадцать':16, 'семнадцать':17, 'восемнадцать':18, 'девятнадцать':19, 'двадцать':20
+};
+
+function parseWordNum(str) {
+  const n = parseInt(str);
+  if (!isNaN(n)) return n;
+  return WORDS_TO_NUM[str.toLowerCase()] || null;
+}
+
+function fuzzyMatchExercise(query) {
+  query = query.toLowerCase().trim();
+  const allEx = [];
+  for (const [cat, exs] of Object.entries(ALL_EXERCISES)) {
+    for (const e of exs) allEx.push({ ...e, cat });
+  }
+  const qWords = query.split(/\s+/).filter(w => w.length > 2);
+  let best = null;
+  let bestScore = 0;
+  for (const e of allEx) {
+    const name = e.n.toLowerCase();
+    let score = 0;
+    if (name.includes(query)) score += 100;
+    for (const w of qWords) {
+      if (name.includes(w)) score += 10;
+    }
+    for (const w of qWords) {
+      if (w.length >= 4) {
+        const nWords = name.split(/\s+/);
+        for (const nw of nWords) {
+          if (nw.startsWith(w.substring(0, 4))) score += 5;
+        }
+      }
+    }
+    if (score > bestScore) {
+      bestScore = score;
+      best = e;
+    }
+  }
+  return bestScore >= 5 ? best : null;
+}
+
+function parseVoiceForBuilder(text) {
+  const lower = text.toLowerCase();
+  let sets = null, reps = null, kg = null;
+  const setsMatch = lower.match(/(\w+)\s+(?:подход|сет|подхода|подходов|сетов|сета)/);
+  if (setsMatch) sets = parseWordNum(setsMatch[1]);
+  const repsMatch = lower.match(/(?:по\s+)?(\w+)\s+(?:раз|повтор|повторени|повторений|повторения)/);
+  if (repsMatch) reps = parseWordNum(repsMatch[1]);
+  if (!reps) {
+    const byMatch = lower.match(/по\s+(\w+)/);
+    if (byMatch) reps = parseWordNum(byMatch[1]);
+  }
+  const kgMatch = lower.match(/(\d+)\s*(?:кг|килограмм|кило)/);
+  if (kgMatch) kg = parseInt(kgMatch[1]);
+  let exName = lower
+    .replace(/(\w+\s+)?(?:подход|сет|подхода|подходов|сетов|сета)/g, '')
+    .replace(/(?:по\s+)?(?:\w+\s+)?(?:раз|повтор|повторени[а-я]*)/g, '')
+    .replace(/по\s+\w+/g, '')
+    .replace(/\d+\s*(?:кг|килограмм|кило)?/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return { exName, sets: sets || 3, reps: reps || 10, kg: kg || 0 };
+}
+
+function handleVoiceForBuilder(text) {
+  const { exName, sets, reps, kg } = parseVoiceForBuilder(text);
+  if (!exName || exName.length < 2) {
+    toast('🎤 Не удалось распознать упражнение');
+    return;
+  }
+  const found = fuzzyMatchExercise(exName);
+  if (!found) {
+    toast('🎤 Упражнение не найдено: "' + exName + '"');
+    return;
+  }
+  selectMuscle(found.cat);
+  if (!pickerChecked[found.cat]) pickerChecked[found.cat] = new Set();
+  pickerChecked[found.cat].add(found.n);
+  if (!pickerParams[found.cat]) pickerParams[found.cat] = {};
+  pickerParams[found.cat][found.n] = { s: sets, r: reps, kg: kg || found.kg };
+  renderExPicker(found.cat);
+  updateBldStartBar();
+  showVoiceResult('✅ ' + found.n + ' — ' + sets + '×' + reps + (kg ? ' · ' + kg + ' кг' : ''));
+  toast('✅ Добавлено: ' + found.n);
+}
+
+function handleVoiceForNutrition(text) {
+  const lower = text.toLowerCase();
+  const weightMatch = lower.match(/(\d+(?:[.,]\d+)?)\s*(?:грамм|гр|г)\b/);
+  let grams = weightMatch ? parseFloat(weightMatch[1].replace(',', '.')) : 100;
+  let namePart = lower.replace(/на завтрак|на обед|на ужин|перекус/gi, '').trim();
+  if (weightMatch) namePart = namePart.slice(0, weightMatch.index).trim();
+  let mealName = namePart.replace(/[^a-zа-яё0-9\s]/gi, ' ').replace(/\s+/g, ' ').trim();
+
+  const found = FOOD_DB.find(f => f.n.toLowerCase() === mealName.toLowerCase() || f.n.toLowerCase().includes(mealName));
+  if (found) {
+    const factor = grams / 100;
+    document.getElementById('nutr-meal-name').value = found.n + ' (' + grams + ' г)';
+    document.getElementById('nutr-kcal').value = Math.round(found.kcal * factor);
+    document.getElementById('nutr-protein').value = (found.p * factor).toFixed(1);
+    document.getElementById('nutr-carbs').value = (found.c * factor).toFixed(1);
+    document.getElementById('nutr-fat').value = (found.f * factor).toFixed(1);
+    showVoiceResult('✅ ' + found.n + ' ' + grams + 'г');
+  } else {
+    if (document.getElementById('nutr-meal-name')) document.getElementById('nutr-meal-name').value = mealName;
+    showVoiceResult('🔍 "' + text + '"');
+  }
+}
+
+window._nutrOffset = 0;
+function changeNutrDate(delta) {
+  window._nutrOffset = (window._nutrOffset || 0) + delta;
+  if (window._nutrOffset > 0) window._nutrOffset = 0;
+  renderNutrEntries();
+}
+window.changeNutrDate = changeNutrDate;
+
+// ===== РЕЦЕПТЫ И ПЛАНЫ =====
+// ==================== РЕЦЕПТЫ ====================
+const RECIPES = [
+  {
+    id: 'r1',
+    name: 'Куриная грудка с рисом',
+    emoji: '🍗',
+    time: '25 мин',
+    kcal: 450,
+    protein: 48,
+    carbs: 42,
+    fat: 6,
+    tags: ['Высокий белок', 'Обед'],
+    mealType: 'lunch',
+    ingredients: [
+      { name: 'Куриная грудка', grams: 200, kcal: 220, protein: 42, carbs: 0, fat: 4.4 },
+      { name: 'Рис варёный', grams: 150, kcal: 174, protein: 3.6, carbs: 38.4, fat: 0.3 },
+      { name: 'Оливковое масло', grams: 10, kcal: 90, protein: 0, carbs: 0, fat: 10 },
+      { name: 'Свежие овощи', grams: 100, kcal: 25, protein: 1.2, carbs: 4.5, fat: 0.3 },
+    ]
+  },
+  {
+    id: 'r2',
+    name: 'Овсянка с бананом',
+    emoji: '🥣',
+    time: '10 мин',
+    kcal: 340,
+    protein: 12,
+    carbs: 58,
+    fat: 7,
+    tags: ['Завтрак', 'Углеводы'],
+    mealType: 'breakfast',
+    ingredients: [
+      { name: 'Овсяные хлопья', grams: 80, kcal: 288, protein: 9.6, carbs: 51, fat: 5.6 },
+      { name: 'Банан', grams: 100, kcal: 89, protein: 1.1, carbs: 23, fat: 0.3 },
+      { name: 'Молоко 2%', grams: 150, kcal: 63, protein: 4.8, carbs: 6.9, fat: 2.4 },
+    ]
+  },
+  {
+    id: 'r3',
+    name: 'Омлет с овощами',
+    emoji: '🍳',
+    time: '15 мин',
+    kcal: 280,
+    protein: 22,
+    carbs: 8,
+    fat: 18,
+    tags: ['Завтрак', 'Низкие углеводы'],
+    mealType: 'breakfast',
+    ingredients: [
+      { name: 'Яйцо куриное', grams: 150, kcal: 215, protein: 18, carbs: 1.2, fat: 15 },
+      { name: 'Перец болгарский', grams: 60, kcal: 20, protein: 0.7, carbs: 4, fat: 0.2 },
+      { name: 'Шпинат', grams: 40, kcal: 9, protein: 1.2, carbs: 1.1, fat: 0.2 },
+      { name: 'Сыр', grams: 20, kcal: 70, protein: 4.2, carbs: 0.6, fat: 5.8 },
+    ]
+  },
+  {
+    id: 'r4',
+    name: 'Творог с ягодами',
+    emoji: '🫐',
+    time: '5 мин',
+    kcal: 220,
+    protein: 24,
+    carbs: 22,
+    fat: 4,
+    tags: ['Перекус', 'Высокий белок'],
+    mealType: 'snack',
+    ingredients: [
+      { name: 'Творог 5%', grams: 200, kcal: 174, protein: 22, carbs: 5.6, fat: 10 },
+      { name: 'Ягоды (замороженные)', grams: 100, kcal: 46, protein: 1, carbs: 11, fat: 0.4 },
+      { name: 'Мёд', grams: 10, kcal: 32, protein: 0, carbs: 8.5, fat: 0 },
+    ]
+  },
+  {
+    id: 'r5',
+    name: 'Лосось с брокколи',
+    emoji: '🐟',
+    time: '30 мин',
+    kcal: 400,
+    protein: 40,
+    carbs: 12,
+    fat: 22,
+    tags: ['Ужин', 'Омега-3'],
+    mealType: 'dinner',
+    ingredients: [
+      { name: 'Лосось', grams: 200, kcal: 280, protein: 38, carbs: 0, fat: 14 },
+      { name: 'Брокколи', grams: 200, kcal: 68, protein: 5.6, carbs: 11.2, fat: 0.8 },
+      { name: 'Оливковое масло', grams: 10, kcal: 90, protein: 0, carbs: 0, fat: 10 },
+      { name: 'Лимон', grams: 30, kcal: 10, protein: 0.3, carbs: 3.2, fat: 0.1 },
+    ]
+  },
+  {
+    id: 'r6',
+    name: 'Протеиновый смузи',
+    emoji: '🥤',
+    time: '5 мин',
+    kcal: 310,
+    protein: 30,
+    carbs: 36,
+    fat: 5,
+    tags: ['Перекус', 'После тренировки'],
+    mealType: 'snack',
+    ingredients: [
+      { name: 'Протеин (1 мерная)' , grams: 30, kcal: 120, protein: 24, carbs: 3, fat: 1.5 },
+      { name: 'Банан', grams: 100, kcal: 89, protein: 1.1, carbs: 23, fat: 0.3 },
+      { name: 'Молоко 2%', grams: 200, kcal: 84, protein: 6.4, carbs: 9.2, fat: 3.2 },
+      { name: 'Арахисовая паста', grams: 10, kcal: 60, protein: 2.5, carbs: 2, fat: 5 },
+    ]
+  }
+];
+
+// Планы питания
+const NUTR_PLANS = [
+  {
+    id: 'plan_loss',
+    name: 'Похудение',
+    emoji: '🔥',
+    kcal: 1600,
+    desc: '~1600 ккал, дефицит 400 ккал. Высокий белок.',
+    color: 'ef4444',
+    days: [
+      { time: '08:00', mealType: 'breakfast', name: 'Омлет с овощами', kcal: 280, protein: 22, carbs: 8, fat: 18 },
+      { time: '11:00', mealType: 'snack',     name: 'Творог с ягодами', kcal: 180, protein: 22, carbs: 14, fat: 3 },
+      { time: '13:30', mealType: 'lunch',     name: 'Куриная грудка с овощами', kcal: 350, protein: 42, carbs: 18, fat: 8 },
+      { time: '16:00', mealType: 'snack',     name: 'Яблоко + миндаль 20г', kcal: 150, protein: 4, carbs: 22, fat: 8 },
+      { time: '19:00', mealType: 'dinner',    name: 'Рыба с брокколи на пару', kcal: 320, protein: 38, carbs: 10, fat: 12 },
+      { time: '21:00', mealType: 'snack',     name: 'Казеиновый творог', kcal: 120, protein: 18, carbs: 8, fat: 2 },
+    ]
+  },
+  {
+    id: 'plan_maintain',
+    name: 'Поддержание',
+    emoji: '⚖️',
+    kcal: 2000,
+    desc: '~2000 ккал. Сбалансированный рацион.',
+    color: '22c55e',
+    days: [
+      { time: '08:00', mealType: 'breakfast', name: 'Овсянка с бананом и орехами', kcal: 380, protein: 12, carbs: 60, fat: 10 },
+      { time: '10:30', mealType: 'snack',     name: 'Протеиновый йогурт', kcal: 160, protein: 18, carbs: 14, fat: 2 },
+      { time: '13:00', mealType: 'lunch',     name: 'Куриная грудка с рисом', kcal: 450, protein: 48, carbs: 42, fat: 6 },
+      { time: '16:00', mealType: 'snack',     name: 'Творог с ягодами', kcal: 220, protein: 24, carbs: 22, fat: 4 },
+      { time: '19:00', mealType: 'dinner',    name: 'Лосось с брокколи', kcal: 400, protein: 40, carbs: 12, fat: 22 },
+      { time: '21:00', mealType: 'snack',     name: 'Кефир 1%', kcal: 90, protein: 8, carbs: 10, fat: 1 },
+    ]
+  },
+  {
+    id: 'plan_gain',
+    name: 'Набор массы',
+    emoji: '💪',
+    kcal: 2800,
+    desc: '~2800 ккал, профицит +300-400. Акцент на белок.',
+    color: 'a78bfa',
+    days: [
+      { time: '08:00', mealType: 'breakfast', name: 'Овсянка + 3 яйца + тост', kcal: 580, protein: 30, carbs: 68, fat: 18 },
+      { time: '10:30', mealType: 'snack',     name: 'Протеиновый смузи', kcal: 380, protein: 35, carbs: 40, fat: 8 },
+      { time: '13:00', mealType: 'lunch',     name: 'Говядина с гречкой и овощами', kcal: 600, protein: 52, carbs: 55, fat: 16 },
+      { time: '16:00', mealType: 'snack',     name: 'Орехи + банан', kcal: 280, protein: 8, carbs: 35, fat: 14 },
+      { time: '19:00', mealType: 'dinner',    name: 'Куриная грудка с макаронами', kcal: 620, protein: 50, carbs: 72, fat: 10 },
+      { time: '21:00', mealType: 'snack',     name: 'Творог с арахисовой пастой', kcal: 280, protein: 28, carbs: 12, fat: 16 },
+    ]
+  }
+];
+
+// ——— РЕНДЕР карточки рецептов ———
+function renderNutrQuickCard() {
+  var wrap = document.getElementById('nutr-quick-card');
+  if (!wrap) return;
+  wrap.innerHTML = `
+    <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;">
+      <span style="font-weight:700;font-size:14px;color:var(--text)">🍽️ Инструменты питания</span>
+    </div>
+    <div class="card-body" style="padding-top:8px;">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+        <button onclick="event.stopPropagation();openRecipesPanel()" class="nutr-quick-btn">
+          <div class="nutr-quick-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 2h18v6a9 9 0 01-18 0V2z"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="12" y1="8" x2="12" y2="22"/><line x1="6" y1="22" x2="18" y2="22"/>
+            </svg>
+          </div>
+          <div class="nutr-quick-label">Рецепты</div>
+        </button>
+        <button onclick="event.stopPropagation();openPlansPanel()" class="nutr-quick-btn">
+          <div class="nutr-quick-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="4" width="18" height="17" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="8" y1="14" x2="10" y2="16"/><line x1="10" y1="16" x2="14" y2="12"/>
+            </svg>
+          </div>
+          <div class="nutr-quick-label">План питания</div>
+        </button>
+      </div>
+    </div>
+  `;
+}
+window.renderNutrQuickCard = renderNutrQuickCard;
+
+function openRecipesPanel() {
+  var ov = document.getElementById('recipes-panel-overlay');
+  var sh = document.getElementById('recipes-panel-sheet');
+  if (ov && sh) { ov.classList.add('show'); sh.classList.add('show'); return; }
+  ov = document.createElement('div');
+  ov.id = 'recipes-panel-overlay';
+  ov.className = 'sheet-overlay';
+  ov.onclick = function(){ closeRecipesPanel(); };
+  document.body.appendChild(ov);
+  sh = document.createElement('div');
+  sh.id = 'recipes-panel-sheet';
+  sh.className = 'bottom-sheet';
+  sh.style.maxHeight = '85vh';
+  sh.innerHTML = `
+    <div class="sheet-handle"></div>
+    <div class="sheet-title">🍳 Рецепты</div>
+    <div style="padding:0 16px 20px;overflow-y:auto;max-height:65vh;">
+      <div class="recipe-chips" style="margin-bottom:12px;">
+        ${RECIPES.map(r => `<button class="recipe-chip" onclick="event.stopPropagation();closeRecipesPanel();setTimeout(function(){openRecipeSheet('${r.id}')},180)">
+          <span class="recipe-chip-emoji">${r.emoji}</span>
+          <span class="recipe-chip-name">${r.name}</span>
+          <span class="recipe-chip-kcal">${r.kcal} ккал</span>
+        </button>`).join('')}
+      </div>
+      <button onclick="closeRecipesPanel();setTimeout(openAddRecipeSheet,180)" style="margin-top:4px;width:100%;padding:11px;background:var(--accent);color:#fff;border:none;border-radius:12px;font-size:0.85rem;font-weight:700;cursor:pointer;">+ Добавить рецепт</button>
+    </div>
+  `;
+  document.body.appendChild(sh);
+  // свайп вниз для закрытия
+  var sy=0, cy=0, drag=false;
+  sh.addEventListener('touchstart', function(e){ if(e.target.tagName==='BUTTON') return; sy=e.touches[0].clientY; cy=sy; drag=true; sh.style.transition='none'; },{passive:true});
+  sh.addEventListener('touchmove', function(e){ if(!drag) return; e.preventDefault(); cy=e.touches[0].clientY; var dy=Math.max(0,cy-sy); sh.style.transform='translateY('+dy+'px)'; },{passive:false});
+  sh.addEventListener('touchend', function(){ if(!drag) return; drag=false; var dy=cy-sy; sh.style.transition='transform 0.25s cubic-bezier(0.32,0.72,0,1)'; if(dy>80){closeRecipesPanel();}else{sh.style.transform='translateY(0)';} });
+  setTimeout(function(){ sh.style.transform='translateY(0)'; ov.classList.add('show'); sh.classList.add('show'); }, 10);
+  // блокируем скролл страницы
+  document.body.style.overflow = 'hidden';
+  var sa = document.querySelector('.scroll-area');
+  if (sa) sa.style.overflow = 'hidden';
+}
+window.openRecipesPanel = openRecipesPanel;
+
+function closeRecipesPanel() {
+  var ov = document.getElementById('recipes-panel-overlay');
+  var sh = document.getElementById('recipes-panel-sheet');
+  if (sh) { sh.style.transition='transform 0.25s cubic-bezier(0.32,0.72,0,1)'; sh.style.transform='translateY(100%)'; }
+  if (ov) ov.classList.remove('show');
+  // разблокируем скролл
+  document.body.style.overflow = '';
+  var sa = document.querySelector('.scroll-area');
+  if (sa) sa.style.overflow = '';
+  setTimeout(function(){
+    var o2=document.getElementById('recipes-panel-overlay');
+    var s2=document.getElementById('recipes-panel-sheet');
+    if(o2) o2.remove();
+    if(s2) s2.remove();
+  }, 260);
+}
+window.closeRecipesPanel = closeRecipesPanel;
+
+function openPlansPanel() {
+  var ov = document.getElementById('plans-panel-overlay');
+  var sh = document.getElementById('plans-panel-sheet');
+  if (ov && sh) { ov.classList.add('show'); sh.classList.add('show'); return; }
+  ov = document.createElement('div');
+  ov.id = 'plans-panel-overlay';
+  ov.className = 'sheet-overlay';
+  ov.onclick = function(){ closePlansPanel(); };
+  document.body.appendChild(ov);
+  sh = document.createElement('div');
+  sh.id = 'plans-panel-sheet';
+  sh.className = 'bottom-sheet';
+  sh.style.maxHeight = '85vh';
+  sh.innerHTML = `
+    <div class="sheet-handle"></div>
+    <div class="sheet-title">📋 Планы питания</div>
+    <div style="padding:0 16px 20px;overflow-y:auto;max-height:65vh;">
+      <div style="font-size:0.78rem;color:var(--text-light);margin-bottom:10px;">Нажми на план — рацион загрузится в дневник питания на сегодня</div>
+      ${NUTR_PLANS.map(p => `
+        <div class="nutr-plan-row" onclick="event.stopPropagation();closePlansPanel();confirmLoadPlan('${p.id}')">
+          <div class="nutr-plan-left">
+            <span class="nutr-plan-emoji">${p.emoji}</span>
+            <div>
+              <div class="nutr-plan-name">${p.name}</div>
+              <div class="nutr-plan-desc">${p.desc}</div>
+            </div>
+          </div>
+          <div class="nutr-plan-kcal">${p.kcal} ккал</div>
+        </div>`).join('')}
+    </div>
+  `;
+  document.body.appendChild(sh);
+  // свайп вниз для закрытия
+  var sy=0, cy=0, drag=false;
+  sh.addEventListener('touchstart', function(e){ if(e.target.tagName==='BUTTON') return; sy=e.touches[0].clientY; cy=sy; drag=true; sh.style.transition='none'; },{passive:true});
+  sh.addEventListener('touchmove', function(e){ if(!drag) return; e.preventDefault(); cy=e.touches[0].clientY; var dy=Math.max(0,cy-sy); sh.style.transform='translateY('+dy+'px)'; },{passive:false});
+  sh.addEventListener('touchend', function(){ if(!drag) return; drag=false; var dy=cy-sy; sh.style.transition='transform 0.25s cubic-bezier(0.32,0.72,0,1)'; if(dy>80){closePlansPanel();}else{sh.style.transform='translateY(0)';} });
+  setTimeout(function(){ sh.style.transform='translateY(0)'; ov.classList.add('show'); sh.classList.add('show'); }, 10);
+  // блокируем скролл страницы
+  document.body.style.overflow = 'hidden';
+  var sa = document.querySelector('.scroll-area');
+  if (sa) sa.style.overflow = 'hidden';
+}
+window.openPlansPanel = openPlansPanel;
+
+function closePlansPanel() {
+  var ov = document.getElementById('plans-panel-overlay');
+  var sh = document.getElementById('plans-panel-sheet');
+  if (sh) { sh.style.transition='transform 0.25s cubic-bezier(0.32,0.72,0,1)'; sh.style.transform='translateY(100%)'; }
+  if (ov) ov.classList.remove('show');
+  // разблокируем скролл
+  document.body.style.overflow = '';
+  var sa = document.querySelector('.scroll-area');
+  if (sa) sa.style.overflow = '';
+  setTimeout(function(){
+    var o2=document.getElementById('plans-panel-overlay');
+    var s2=document.getElementById('plans-panel-sheet');
+    if(o2) o2.remove();
+    if(s2) s2.remove();
+  }, 260);
+}
+window.closePlansPanel = closePlansPanel;
+
+// legacy stubs
+function renderRecipesCard() { renderNutrQuickCard(); }
+function renderNutrPlansCard() {}
+window.renderRecipesCard = renderRecipesCard;
+window.renderNutrPlansCard = renderNutrPlansCard;
+
+function confirmLoadPlan(planId) {
+  const plan = NUTR_PLANS.find(p => p.id === planId);
+  if (!plan) return;
+  if (!confirm(`Загрузить план «${plan.name}» (~${plan.kcal} ккал) в дневник питания на сегодня?`)) return;
+  loadNutrPlanToday(plan);
+}
+window.confirmLoadPlan = confirmLoadPlan;
+
+function loadNutrPlanToday(plan) {
+  const today = (function() { const d = new Date(); d.setDate(d.getDate() + (window.nutrOffset || 0)); return d.toLocaleDateString('ru-RU'); })();
+  let added = 0;
+  plan.days.forEach(item => {
+    const entry = {
+      id: Date.now() + '' + Math.random().toString(36).slice(2),
+      name: `${item.time} ${item.name}`,
+      kcal: item.kcal,
+      protein: item.protein,
+      carbs: item.carbs,
+      fat: item.fat,
+      grams: null,
+      mealType: item.mealType,
+      date: today
+    };
+    if (typeof nutrEntries !== 'undefined') nutrEntries.push(entry);
+    added++;
+  });
+  if (typeof nutrEntries !== 'undefined') localStorage.setItem('fs-nutrition', JSON.stringify(nutrEntries));
+  renderNutrEntries();
+  toast(`✅ Загружено ${added} приёмов пищи`);
+}
+window.loadNutrPlanToday = loadNutrPlanToday;
+
+// ==================== SIMULATION ====================
+function runSimulation() {
+  const start   = parseFloat(document.getElementById('sim-start')?.value);
+  const target  = parseFloat(document.getElementById('sim-target')?.value);
+  const weeks   = parseInt(document.getElementById('sim-weeks')?.value);
+  const freq    = parseInt(document.getElementById('sim-freq')?.value) || 3;
+  const deficit = parseFloat(document.getElementById('sim-deficit')?.value) || -400;
+
+  ['sim-start','sim-target','sim-weeks'].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    if (!el.value) { el.style.borderColor = '#ef4444'; setTimeout(() => el.style.borderColor = '', 2000); }
+    else el.style.borderColor = '';
+  });
+
+  if (!start || !target || !weeks) return;
+  // Валидация реалистичности цели в симуляции
+  if (target < 10 || target > 400) {
+    const warnEl2 = document.getElementById('sim-warn');
+    if (warnEl2) {
+      warnEl2.innerHTML = '<div class="sim-warn-item">❗ Целевой вес ' + target + ' кг нереалистичен. Введи значение от 20 до 300 кг.</div>';
+      warnEl2.style.display = 'block';
+    }
+    return;
+  }
+  if (Math.abs(start - target) < 0.1) {
+    const warnEl2 = document.getElementById('sim-warn');
+    if (warnEl2) {
+      warnEl2.innerHTML = '<div class="sim-warn-item">⚠️ Текущий и целевой вес совпадают — цель не задана. Измени целевой вес.</div>';
+      warnEl2.style.display = 'block';
+    }
+    return;
+  }
+
+  const output = document.getElementById('sim-output');
+  const barsEl = document.getElementById('sim-bars');
+  const concEl = document.getElementById('sim-conclusion');
+  const chartEl = document.getElementById('sim-chart');
+  const kpiEl  = document.getElementById('sim-kpi');
+  const warnEl = document.getElementById('sim-warn');
+  if (!output || !barsEl || !concEl) return;
+
+  const weeklyChange = (deficit * 7) / 7700;
+  const step = Math.max(1, Math.floor(weeks / 8));
+  const maxDelta = Math.abs(weeklyChange * weeks) || 1;
+
+  // --- KPI ---
+  const totalChange = +(weeklyChange * weeks).toFixed(1);
+  const finalWeight = +(start + totalChange).toFixed(1);
+  const reached = deficit < 0 ? finalWeight <= target : finalWeight >= target;
+  const weeksToGoal = Math.abs((target - start) / (weeklyChange || 0.001));
+  const kcalNeeded = deficit < 0
+    ? Math.round((profile?.tdee || 2000) + deficit)
+    : Math.round((profile?.tdee || 2000) + deficit);
+  const tdeeVal = profile ? Math.round(calcBMR(profile) * profile.activity) : 2000;
+  const _simAge = Number(profile?.age) || 25;
+  let rec = tdeeVal;
+  if (profile?.goal === 'loss') rec -= (_simAge > 55 ? 300 : 400);
+  if (profile?.goal === 'gain') rec += (_simAge > 55 ? 200 : 300);
+  const eatPerDay = Math.max(1200, rec + deficit);
+
+  if (kpiEl) {
+    kpiEl.innerHTML = `
+      <div class="sim-kpi-grid">
+        <div class="sim-kpi-item">
+          <div class="sim-kpi-val" style="color:var(--accent)">${weeklyChange > 0 ? '+' : ''}${weeklyChange.toFixed(2)} кг</div>
+          <div class="sim-kpi-lbl">изменение/нед</div>
+        </div>
+        <div class="sim-kpi-item">
+          <div class="sim-kpi-val">${finalWeight} кг</div>
+          <div class="sim-kpi-lbl">вес через ${weeks} нед</div>
+        </div>
+        <div class="sim-kpi-item">
+          <div class="sim-kpi-val" style="color:var(--accent)">${eatPerDay}</div>
+          <div class="sim-kpi-lbl">ккал/день для цели</div>
+        </div>
+        <div class="sim-kpi-item">
+          <div class="sim-kpi-val">${reached ? '✅ ' + weeks + ' нед' : '~' + Math.ceil(weeksToGoal) + ' нед'}</div>
+          <div class="sim-kpi-lbl">${reached ? 'цель достигнута' : 'нужно для цели'}</div>
+        </div>
+      </div>`;
+  }
+
+  // --- WARNING ---
+  if (warnEl) {
+    const warnings = [];
+    const _warnAge = Number(profile?.age) || 25;
+    const _maxSafeDeficit = _warnAge > 55 ? -400 : -700;
+    const _maxSafeSurplus = _warnAge > 55 ?  400 :  700;
+    if (deficit < _maxSafeDeficit) warnings.push(_warnAge > 55
+      ? '⚠️ После 55 лет дефицит более 400 ккал/день ускоряет потерю мышечной массы'
+      : '⚠️ Дефицит больше 700 ккал/день — риск потери мышц и слабости');
+    if (deficit > _maxSafeSurplus) warnings.push(_warnAge > 55
+      ? '⚠️ После 55 лет профицит более 400 ккал/день даёт преимущественно жир'
+      : '⚠️ Профицит больше 700 ккал/день — высокий набор жира');
+    if (eatPerDay < 1200) warnings.push('⚠️ Менее 1200 ккал/день — слишком мало для нормального обмена веществ');
+    if (_warnAge < 18 && deficit < 0) warnings.push('⚠️ До 18 лет дефицит калорий нежелателен — организм ещё растёт');
+    if (freq < 2 && deficit < -300) warnings.push('💡 Добавь тренировки — без них при дефиците теряются мышцы');
+    warnEl.innerHTML = warnings.map(w => `<div class="sim-warn-item">${w}</div>`).join('');
+    warnEl.style.display = warnings.length ? 'block' : 'none';
+  }
+
+  // --- SVG CHART ---
+  if (chartEl) {
+    const points = [];
+    for (let w = 0; w <= weeks; w++) {
+      points.push({ w, kg: +(start + weeklyChange * w).toFixed(2) });
+    }
+    const W = 280, H = 100, padX = 28, padY = 12;
+    const minKg = Math.min(...points.map(p => p.kg), target) - 1;
+    const maxKg = Math.max(...points.map(p => p.kg), target) + 1;
+    const range = maxKg - minKg || 1;
+    const px = p => padX + (p.w / weeks) * (W - padX * 2);
+    const py = p => H - padY - ((p.kg - minKg) / range) * (H - padY * 2);
+    const targetY = H - padY - ((target - minKg) / range) * (H - padY * 2);
+
+    const polyline = points.map(p => `${px(p)},${py(p)}`).join(' ');
+    const area = `${padX},${H - padY} ` + points.map(p => `${px(p)},${py(p)}`).join(' ') + ` ${px(points[points.length-1])},${H - padY}`;
+
+    // x-axis labels
+    const xLabels = [0, Math.round(weeks/2), weeks].map(w => {
+      const xp = padX + (w / weeks) * (W - padX * 2);
+      return `<text x="${xp}" y="${H}" text-anchor="middle" font-size="8" fill="var(--text-light)">${w === 0 ? 'Старт' : w + ' нед'}</text>`;
+    }).join('');
+
+    // y-axis labels
+    const yLabels = [minKg+1, target, maxKg-1].map(kg => {
+      const yp = H - padY - ((kg - minKg) / range) * (H - padY * 2);
+      return `<text x="${padX - 4}" y="${yp + 3}" text-anchor="end" font-size="8" fill="var(--text-light)">${kg.toFixed(0)}</text>`;
+    }).join('');
+
+    chartEl.innerHTML = `
+      <div style="font-size:11px;color:var(--text-light);font-weight:600;margin-bottom:6px;">📈 График изменения веса</div>
+      <svg viewBox="0 0 ${W} ${H + 10}" style="width:100%;overflow:visible;">
+        <defs>
+          <linearGradient id="simGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="var(--accent)" stop-opacity="0.3"/>
+            <stop offset="100%" stop-color="var(--accent)" stop-opacity="0"/>
+          </linearGradient>
+        </defs>
+        <!-- target line -->
+        <line x1="${padX}" y1="${targetY}" x2="${W - padX}" y2="${targetY}"
+          stroke="var(--accent)" stroke-width="1" stroke-dasharray="4 3" opacity="0.5"/>
+        <text x="${W - padX + 2}" y="${targetY + 3}" font-size="8" fill="var(--accent)">${target} кг</text>
+        <!-- area -->
+        <polygon points="${area}" fill="url(#simGrad)"/>
+        <!-- line -->
+        <polyline points="${polyline}" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        <!-- start dot -->
+        <circle cx="${px(points[0])}" cy="${py(points[0])}" r="3.5" fill="var(--accent)"/>
+        <text x="${px(points[0])}" y="${py(points[0]) - 5}" text-anchor="middle" font-size="8" fill="var(--text)">${start} кг</text>
+        <!-- end dot -->
+        <circle cx="${px(points[points.length-1])}" cy="${py(points[points.length-1])}" r="3.5" fill="${reached ? '#22c55e' : 'var(--accent)'}"/>
+        <text x="${px(points[points.length-1])}" y="${py(points[points.length-1]) - 5}" text-anchor="middle" font-size="8" fill="var(--text)">${finalWeight} кг</text>
+        ${xLabels}
+        ${yLabels}
+      </svg>`;
+  }
+
+  // --- BARS ---
+  let bars = '';
+  for (let w = 0; w <= weeks; w += step) {
+    const projected = +(start + weeklyChange * w).toFixed(1);
+    const delta = Math.abs(projected - start);
+    const pct = Math.min(100, Math.max(4, (delta / maxDelta) * 100));
+    const cls = deficit < 0 ? 'loss' : deficit > 0 ? 'gain' : 'same';
+    bars += `
+      <div class="sim-bar-row">
+        <span class="wlbl">${w === 0 ? 'Старт' : w + ' нед'}</span>
+        <div class="sim-bar-bg">
+          <div class="sim-bar-fill ${cls}" style="width:${w === 0 ? 4 : pct}%">${projected} кг</div>
+        </div>
+      </div>`;
+  }
+
+  // --- CONCLUSION ---
+  let conclusion = `<b>Через ${weeks} нед:</b> ~${finalWeight} кг`;
+  if (reached) {
+    conclusion += ` ✅ Цель ${target} кг достигнута!`;
+  } else {
+    conclusion += ` — цель ${target} кг ещё не достигнута.`;
+    conclusion += `<br>Нужно ~<b>${Math.ceil(weeksToGoal)} нед</b> при дефиците ${deficit} ккал/день.`;
+  }
+  if (freq >= 3) {
+    conclusion += `<br><span style="color:var(--accent);font-size:0.82em">🏋️ ${freq} тр/нед — отличный темп для сохранения мышц</span>`;
+  }
+
+  barsEl.innerHTML = bars;
+  concEl.innerHTML = conclusion;
+  output.style.display = 'block';
+}
+window.runSimulation = runSimulation;
+// ==================== ГОЛОСОВОЙ ВВОД В ШТОРКАХ ====================
+let _sheetRec = null;
+let _sheetMicActive = false;
+
+window.startSheetVoice = function(inputId, callbackName) {
+  if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+    toast('❌ Голосовой ввод не поддерживается');
+    return;
+  }
+  const input = document.getElementById(inputId);
+  const btn = input ? input.parentElement.querySelector('button[aria-label="Голосовой ввод"]') : null;
+
+  if (_sheetMicActive) {
+    _sheetMicActive = false;
+    if (_sheetRec) { try { _sheetRec.stop(); } catch(e){} _sheetRec = null; }
+    if (btn) { btn.style.background = 'var(--accent)'; btn.style.animation = ''; }
+    return;
+  }
+
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  _sheetRec = new SR();
+  _sheetRec.lang = 'ru-RU';
+  _sheetRec.interimResults = false;
+  _sheetRec.maxAlternatives = 1;
+  _sheetMicActive = true;
+  if (btn) { btn.style.background = '#ef4444'; btn.style.animation = 'pulse 0.8s infinite'; }
+
+  _sheetRec.onresult = (e) => {
+    const text = e.results[0][0].transcript;
+    if (input) { input.value = text; input.dispatchEvent(new Event('input')); }
+    if (callbackName && window[callbackName]) window[callbackName]();
+    _sheetMicActive = false;
+    if (btn) { btn.style.background = 'var(--accent)'; btn.style.animation = ''; }
+  };
+  _sheetRec.onerror = () => {
+    _sheetMicActive = false;
+    if (btn) { btn.style.background = 'var(--accent)'; btn.style.animation = ''; }
+    toast('❌ Ошибка микрофона');
+  };
+  _sheetRec.onend = () => {
+    _sheetMicActive = false;
+    if (btn) { btn.style.background = 'var(--accent)'; btn.style.animation = ''; }
+  };
+  _sheetRec.start();
+};
