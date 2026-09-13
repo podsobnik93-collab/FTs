@@ -4861,14 +4861,40 @@ html[data-theme="carbon"] #nutrient-info-overlay.nutrient-info-overlay .nutrient
   -webkit-backdrop-filter: none !important;
 }
 
-/* Тренировки: выполнение — не даём повторениям вылезать за край на мобильных */
-#wt-execute .set-reps {
-  max-width: 80px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+
+/* Выполнение тренировки: единица веса «кг» уменьшена до размера подписи «повт». */
+#wt-execute .set-ctrl:first-child {
+  font-size: 12px;
+  font-weight: 600;
 }
 
-#wt-execute .set-ctrl {
-  min-width: 0;
+
+/* Выполнение: повторения внутри экрана */
+@media (max-width: 480px) {
+  .exe-set-row {
+    gap: 6px;
+    overflow: hidden;
+  }
+
+  .exe-set-row .set-chip {
+    min-width: 0;
+  }
+
+  .exe-set-row .set-ctrl:nth-child(2) {
+    gap: 0;
+  }
+
+  .exe-set-row .set-ctrl:nth-child(2) button {
+    padding-left: 6px;
+    padding-right: 6px;
+  }
+
+  .exe-set-row .set-ctrl:nth-child(2) input {
+    width: 42px;
+  }
+
+  .exe-set-row .set-reps-unit {
+    min-width: 36px;
+    font-size: 11px;
+  }
 }
