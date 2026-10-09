@@ -1275,8 +1275,8 @@ function renderEncyclopedia() {
     `;
   }
 
-  const searchInput = document.getElementById('enc-search');
-  if (searchInput) searchInput.blur();
+  // При вводе нельзя терять фокус: иначе после первой буквы поле перестаёт принимать текст.
+  // Перерисовка списка и фильтров не должна прерывать печать.
 }
 window.renderEncyclopedia = renderEncyclopedia;
 
