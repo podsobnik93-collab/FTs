@@ -472,6 +472,24 @@ window.moveEx = moveEx;
 
 
 
+const executeCardEditors=new WeakSet();
+function toggleExecuteCardEdit(idx){
+  const ex=customWt[idx]; if(!ex)return;
+  if(executeCardEditors.has(ex))executeCardEditors.delete(ex);else executeCardEditors.add(ex);
+  renderExecute();
+}
+window.toggleExecuteCardEdit=toggleExecuteCardEdit;
+function toggleExecuteFavorite(idx){
+  const ex=customWt[idx];if(!ex)return;
+  if(typeof toggleFav==='function')toggleFav(ex.n);
+  else {
+    const favorites=new Set(JSON.parse(localStorage.getItem('fs-fav-exs')||'[]'));
+    if(favorites.has(ex.n))favorites.delete(ex.n);else favorites.add(ex.n);
+    localStorage.setItem('fs-fav-exs',JSON.stringify([...favorites]));
+  }
+  renderExecute();
+}
+window.toggleExecuteFavorite=toggleExecuteFavorite;
 function renderExecute(){
   syncWorkoutDateInputs();
   updateExeProgress();
@@ -489,9 +507,24 @@ function renderExecute(){
     const e=customWt[i];
     if(!e.sets_data)e.sets_data=Array.from({length:e.s},(_,idx)=>({r:e.r,kg:e.kg,done:false}));
     const setsHtml=e.sets_data.map((set,si)=>`<div class="exe-set-row ${set.done?'done-set':''}"><div class="set-chip" data-set="${si+1}" onclick="toggleSet(${i},${si})"><div class="chk">✓</div></div><div class="set-controls"><div class="set-ctrl"><button onclick="updateSetVal(${i},${si},'kg',-0.5)">-</button><input class="set-kg-input" id="set-kg-${i}-${si}" type="number" inputmode="decimal" value="${set.kg}" onfocus="this.select()" onchange="setSetVal(${i},${si},'kg',parseFloat(this.value)||0)"><button onclick="updateSetVal(${i},${si},'kg',0.5)">+</button></div><span class="fit-set-unit">вес</span><div class="set-ctrl"><button onclick="updateSetVal(${i},${si},'r',-1)">-</button><input class="set-kg-input" id="set-r-${i}-${si}" type="number" min="1" max="100" inputmode="numeric" value="${set.r}" onfocus="this.select()" onchange="setSetVal(${i},${si},'r',parseInt(this.value,10))"><button onclick="updateSetVal(${i},${si},'r',1)">+</button></div><span class="fit-set-unit">раз</span></div></div>`).join('');
-    const editControls=editMode?`<div style="display:flex;gap:6px;margin-top:8px;justify-content:flex-end;border-top:1px solid var(--border);padding-top:8px;flex-wrap:wrap;"><button onclick="moveEx(${i},-1)" ${i===0?"disabled":""} style="background:var(--input-bg);border:1px solid var(--border);border-radius:8px;padding:5px 10px;font-size:14px;${i===0?"opacity:.3":""}">↑</button><button onclick="moveEx(${i},1)" ${i===customWt.length-1?"disabled":""} style="background:var(--input-bg);border:1px solid var(--border);border-radius:8px;padding:5px 10px;font-size:14px;${i===customWt.length-1?"opacity:.3":""}">↓</button><button class="exe-inline-action add" type="button" onclick="addWorkoutSet(${i})" title="Добавить подход" aria-label="Добавить подход">+</button><button class="exe-inline-action remove" type="button" onclick="removeWorkoutSet(${i})" ${e.sets_data.length<=1?'disabled':''} title="Убрать последний подход" aria-label="Убрать последний подход">−</button><button onclick="deleteExercise(${i})" style="background:#fdeaea;border:1px solid #e74c3c;border-radius:8px;padding:5px 10px;font-size:12px;color:#e74c3c;">✕ Удалить</button></div>`:"";
+    const cardEditing=executeCardEditors.has(e);
+    const isFavorite=JSON.parse(localStorage.getItem('fs-fav-exs')||'[]').includes(e.n);
+    const editControls=cardEditing?`<div class="exe-card-actions" aria-label="Редактирование упражнения">
+      <button type="button" class="exe-card-action bookmark ${isFavorite?'is-favorite':''}" onclick="toggleExecuteFavorite(${i})" aria-pressed="${isFavorite}" title="Избранное" aria-label="Избранное"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12v18l-6-4-6 4Z"/></svg></button>
+      <button type="button" class="exe-card-action" onclick="addWorkoutSet(${i})" title="Добавить подход" aria-label="Добавить подход">+</button>
+      <button type="button" class="exe-card-action" onclick="removeWorkoutSet(${i})" ${e.sets_data.length<=1?'disabled':''} title="Убрать последний подход" aria-label="Убрать последний подход">−</button>
+      <button type="button" class="exe-card-action delete" onclick="deleteExercise(${i})" title="Удалить упражнение" aria-label="Удалить упражнение"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/></svg></button>
+    </div>`:'';
     const prEntry=exlog[e.n]?.reduce((best,s)=>s.kg>best.kg?s:best,{kg:0,r:0});
-    html+=`<div class="exe-ex-row ${e.done?'done-row':''}" id="exe-row-${i}"><div class="exe-ex-inner"><div class="exe-drag-handle" aria-label="Перетащить упражнение" title="Перетащить"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="9" cy="6" r="1.1"/><circle cx="15" cy="6" r="1.1"/><circle cx="9" cy="12" r="1.1"/><circle cx="15" cy="12" r="1.1"/><circle cx="9" cy="18" r="1.1"/><circle cx="15" cy="18" r="1.1"/></svg></div><div class="exe-ex-left"><div class="exe-ex-name">${e.n}</div></div><div class="exe-check ${e.done?'checked':''}" onclick="toggleExDone(${i})">${e.done?'✓':''}</div></div><div class="exe-sets-container" id="exe-sets-${i}">${setsHtml}</div>${editControls}</div>`;
+    html+=`<div class="exe-ex-row exe-card-v2 ${e.done?'done-row':''} ${cardEditing?'is-card-editing':''}" id="exe-row-${i}">
+      <div class="exe-ex-inner">
+        <button type="button" class="exe-check ${e.done?'checked':''}" onclick="toggleExDone(${i})" aria-label="Отметить упражнение выполненным" aria-pressed="${!!e.done}">${e.done?'✓':''}</button>
+        <div class="exe-ex-left"><div class="exe-ex-name">${escapeSearchAttr(e.n)}</div></div>
+        <div class="exe-drag-handle" aria-label="Перетащить упражнение" title="Перетащить"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="9" cy="6" r="1.1"/><circle cx="15" cy="6" r="1.1"/><circle cx="9" cy="12" r="1.1"/><circle cx="15" cy="12" r="1.1"/><circle cx="9" cy="18" r="1.1"/><circle cx="15" cy="18" r="1.1"/></svg></div>
+        <button type="button" class="exe-card-pencil" onclick="toggleExecuteCardEdit(${i})" aria-label="Редактировать упражнение" aria-expanded="${cardEditing}" aria-controls="exe-body-${i}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></button>
+      </div>
+      <div class="exe-card-body" id="exe-body-${i}"><div class="exe-sets-container" id="exe-sets-${i}">${setsHtml}</div>${editControls}</div>
+    </div>`;
   }
   el.innerHTML=html||'<div style="text-align:center; padding:32px; color:var(--text-muted)">Нет упражнений. Нажмите «+ Добавить»</div>';
   if(editMode){
@@ -731,7 +764,7 @@ function cancelWorkout(){
 window.cancelWorkout = cancelWorkout;
 
 function deleteExercise(idx){
-  if(confirm('Удалить упражнение "'+customWt[idx].n+'"?')){customWt.splice(idx,1); syncWorkoutTitle(); renderExecute();}
+  if(confirm('Удалить упражнение "'+customWt[idx].n+'"?')){customWt.splice(idx,1); syncWorkoutTitle(); saveWorkoutFlowState(); renderExecute();}
 }
 window.deleteExercise = deleteExercise;
 
