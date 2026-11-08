@@ -1,0 +1,136 @@
+name: Fit Sim v6 targeted fixes
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/fitsim-v6-fix.yml]
+  workflow_dispatch:
+permissions:
+  contents: write
+  pages: write
+concurrency:
+  group: fitsim-v6-patch
+  cancel-in-progress: false
+jobs:
+  patch:
+    if: github.repository == 'podsobnik93-collab/FTs' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          persist-credentials: true
+      - name: Verify originals, patch three files and check JavaScript
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import hashlib, re, subprocess, tempfile
+          from pathlib import Path
+          from html.parser import HTMLParser
+          expected={'pages.js':'b4a624f3068b2d78ce3faf69a8ad0359f1712ef1','voice.js':'c380bb40ac5a4cd9fa37612ec6479aeaf3b7ba16','index.html':'4bf85ac32179c463800d633d9d3e780b77f30949'}
+          def apply(files):
+           def once(text,old,new):
+            if text.count(old)!=1: raise RuntimeError('Expected unique patch context: '+old[:90])
+            return text.replace(old,new,1)
+           p,v,h=(files[k] for k in ('pages.js','voice.js','index.html'))
+           old="""function renderHome() {
+            profile = JSON.parse(localStorage.getItem('fs-profile') || 'null');
+            if (!profile) return;
+          
+            document.getElementById('home-empty').style.display = 'none';
+            document.getElementById('home-content').style.display = 'block';"""
+           new="""function renderHome() {
+            // Fit Sim v6: render an actionable empty state without changing stored data.
+            try { profile = JSON.parse(localStorage.getItem('fs-profile') || 'null'); }
+            catch (error) { console.warn('Cannot read profile', error); profile = null; }
+            const empty = document.getElementById('home-empty');
+            const content = document.getElementById('home-content');
+            if (!profile || typeof profile !== 'object' || Array.isArray(profile)) {
+              profile = null;
+              if (empty) {
+                empty.style.display = 'block';
+                empty.innerHTML = '<div class="card"><div class="card-header">Добро пожаловать в FitSim</div><div class="card-body"><p>Заполните профиль, чтобы начать работу. Существующие записи не удаляются.</p><button type="button" class="save-btn" onclick="goTo(&quot;profile&quot;,&quot;Профиль&quot;)">Создать профиль</button></div></div>';
+              }
+              if (content) content.style.display = 'none';
+              return;
+            }
+            if (empty) empty.style.display = 'none';
+            if (content) content.style.display = 'block';"""
+           p=once(p,old,new)
+           v=once(v,"const VERSION='voice-module-5';","const VERSION='voice-module-6';")
+           v=once(v,"rec.onspeechend=()=>{if(s.rec!==rec||s.finished)return;trace(s,'speechend');if(!s.stopping&&!s.options.continuous)cancel(s,true);};","rec.onspeechend=()=>{if(s.rec!==rec||s.finished)return;trace(s,'speechend');};")
+           v=once(v,"if(!s.options.continuous&&!s.stopping){clearTimeout(s.settle);s.settle=setTimeout(()=>{if(active===s&&!s.finished&&!s.stopping)cancel(s,true);},1800);}","")
+           start=v.index('  rec.onresult=e=>{');end=v.index('  rec.onerror=e=>{',start)
+           segment=v[start:end]
+           segment=once(segment,'if(!valid(s)){cancel(s);return;}','if(!valid(s)){cancel(s);return;}\n   clearTimeout(s.watchdog);s.watchdog=null;')
+           v=v[:start]+segment+v[end:]
+           draft=""" function fillEditableDraft(s,text){
+            let id='',append=false;
+            if(s.key.startsWith('knowledge:'))id=s.key.slice(10);
+            else if(s.key.startsWith('input:'))id=s.key.slice(6);
+            else if(s.key==='ai-input'){id='ai-input';append=true;}
+            else if(s.key==='calendar-note'){id='cal-note-text';append=true;}
+            else if(s.key==='prep'){id='prep-voice-text';append=true;}
+            else if(s.key==='food-picker'&&typeof foodPickerTab!=='undefined'&&foodPickerTab!=='add')id='food-search';
+            const allowed=['enc-search','kb-food-search','builder-ex-search','add-ex-search','food-search','ai-input','cal-note-text','prep-voice-text'];
+            const input=allowed.includes(id)?document.getElementById(id):null;
+            if(!input||!input.isConnected||input.disabled||input.readOnly||!['INPUT','TEXTAREA'].includes(input.tagName)){
+             trace(s,'draft-not-applied',{characters:text.length});
+             notify('Предварительно распознано: «'+text+'». Повторите команду для подтверждения.');return;
+            }
+            input.value=append&&input.value.trim()?input.value.trimEnd()+' '+text:text;
+            input.dispatchEvent(new Event('input',{bubbles:true}));
+            trace(s,'draft-filled',{characters:text.length});
+            notify('Предварительный текст заполнен. Проверьте его перед сохранением.');
+           }
+          """
+           v=once(v,' function errorMessage(code){',draft+' function errorMessage(code){')
+           old="if(!s.received&&!s.discard&&s.interim&&!s.error&&valid(s)){trace(s,'unfinalized');try{s.options.onUnfinalized?.(s.interim);}catch(x){console.error('Voice unfinished callback',x);}}"
+           new="if((!s.received||s.options.continuous)&&!s.options.interimFallback&&!s.discard&&s.interim&&!s.error&&valid(s)){trace(s,'unfinalized');try{if(typeof s.options.onUnfinalized==='function')s.options.onUnfinalized(s.interim);else fillEditableDraft(s,s.interim);}catch(x){console.error('Voice unfinished callback',x);}}"
+           v=once(v,old,new)
+           h=once(h,'  if (profile) {\n    renderHome();\n    loadProfileToForm();','  renderHome();\n  if (profile) {\n    loadProfileToForm();')
+           for name in ('voice','pages'):
+            pattern=r'(src=["\'])'+name+r'\.js(?:\?[^"\']*)?(["\'])'
+            h,count=re.subn(pattern,lambda m:m[1]+name+'.js?v=voice-module-6'+m[2],h)
+            if count!=1: raise RuntimeError('Expected one script for '+name)
+           return {'pages.js':p,'voice.js':v,'index.html':h}
+          class Scripts(HTMLParser):
+           def __init__(self): super().__init__();self.active=False;self.external=False;self.parts=[];self.items=[]
+           def handle_starttag(self,tag,attrs):
+            if tag=='script': self.active=True;self.external=bool(dict(attrs).get('src'));self.parts=[]
+           def handle_data(self,text):
+            if self.active:self.parts.append(text)
+           def handle_endtag(self,tag):
+            if tag=='script' and self.active:
+             if not self.external:self.items.append(''.join(self.parts))
+             self.active=False
+          if __name__=='__main__':
+           files={}
+           for name,sha in expected.items():
+            data=Path(name).read_bytes();actual=hashlib.sha1(b'blob '+str(len(data)).encode()+bytes([0])+data).hexdigest()
+            if actual!=sha: raise RuntimeError(name+' changed; refusing to overwrite')
+            files[name]=data.decode('utf-8')
+           updated=apply(files)
+           parser=Scripts();parser.feed(updated['index.html'])
+           for source in [updated['pages.js'],updated['voice.js']]+parser.items:
+            with tempfile.NamedTemporaryFile(suffix='.js',mode='w',encoding='utf-8') as f:
+             f.write(source);f.flush();subprocess.run(['node','--check',f.name],check=True)
+           for name,text in updated.items():Path(name).write_text(text,encoding='utf-8')
+          PY
+      - name: Commit only the three agreed files
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- pages.js voice.js index.html
+          git diff --cached --check
+          git commit -m "Fix empty home and premature speech stops (v6)"
+          git push origin HEAD:main
+      - name: Request publication of the updated site
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          curl --fail-with-body --silent --show-error -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            https://api.github.com/repos/podsobnik93-collab/FTs/pages/builds
