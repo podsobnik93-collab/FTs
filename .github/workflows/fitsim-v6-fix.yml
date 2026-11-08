@@ -59,7 +59,7 @@ jobs:
            p=once(p,old,new)
            v=once(v,"const VERSION='voice-module-5';","const VERSION='voice-module-6';")
            v=once(v,"rec.onspeechend=()=>{if(s.rec!==rec||s.finished)return;trace(s,'speechend');if(!s.stopping&&!s.options.continuous)cancel(s,true);};","rec.onspeechend=()=>{if(s.rec!==rec||s.finished)return;trace(s,'speechend');};")
-           v=once(v,"if(!s.options.continuous&&!s.stopping){clearTimeout(s.settle);s.settle=setTimeout(()=>{if(active===s&&!s.finished&&!s.stopping)cancel(s,true);},1800);}","")
+           v=once(v,"    if(!s.options.continuous&&!s.stopping){clearTimeout(s.settle);s.settle=setTimeout(()=>{if(active===s&&!s.finished&&!s.stopping)cancel(s,true);},1800);}\n","")
            start=v.index('  rec.onresult=e=>{');end=v.index('  rec.onerror=e=>{',start)
            segment=v[start:end]
            segment=once(segment,'if(!valid(s)){cancel(s);return;}','if(!valid(s)){cancel(s);return;}\n   clearTimeout(s.watchdog);s.watchdog=null;')
