@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Fit Sim: проверка повторной записи</title>
+<style>body{font:16px system-ui;margin:20px;max-width:680px;background:#141327;color:#fff}button,select,textarea{font:inherit;padding:12px;margin:6px 0;max-width:100%;box-sizing:border-box}textarea{width:100%;height:260px}p{line-height:1.45}#text{white-space:pre-wrap;min-height:40px;padding:12px;border:1px solid #888}</style>
+<h1>Проверка повторной записи</h1>
+<p>Это отдельная страница без кода Fit Sim. Она не меняет записи приложения. Аудио обрабатывает браузерный сервис распознавания; страница не сохраняет аудио и не отправляет его на собственный сервер.</p>
+<p>В Safari выберите режим, нажмите «Начать», скажите «Вода 250». Дождитесь завершения. Нажмите «Начать» снова и скажите «Кофе 100». Скопируйте журнал. Для проверки другого режима сначала перезагрузите страницу, затем выберите другой режим.</p>
+<label>Режим <select id="mode"><option value="fresh">Новый распознаватель каждый раз</option><option value="reuse">Повторное использование одного</option></select></label><br>
+<button id="start">Начать</button> <button id="stop" disabled>Остановить</button>
+<p id="status" role="status" aria-live="polite">Готово к тесту.</p><div id="text"></div>
+<p>Журнал содержит версию браузера и технические события, но не текст речи. Он хранится только до перезагрузки.</p>
+<button id="copy">Скопировать журнал</button><textarea id="log" readonly aria-label="Журнал"></textarea>
+<script>
+'use strict';
+const el=id=>document.getElementById(id),SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+const report={version:'isolated-speech-test-2',userAgent:navigator.userAgent,standalone:!!navigator.standalone||matchMedia('(display-mode: standalone)').matches,secure:window.isSecureContext,supported:!!SR,events:[]};
+let active=null,shared=null,id=0;
+function log(s,event,data={}){report.events.push({at:new Date().toISOString(),id:s?s.id:0,event,...data});if(report.events.length>160)report.events.shift();el('log').value=JSON.stringify(report,null,2);}
+function status(text){el('status').textContent=text;}
+function lock(busy){el('start').disabled=busy;el('mode').disabled=busy;el('stop').disabled=!busy;}
+function stop(s){if(active!==s||s.stopping)return;s.stopping=true;clearTimeout(s.timer);log(s,'stop-call');status('Жду завершения…');try{s.rec.stop();}catch(e){log(s,'stop-exception',{name:e.name});}s.abortTimer=setTimeout(()=>{if(active!==s)return;log(s,'abort-call');try{s.rec.abort();}catch(e){log(s,'abort-exception',{name:e.name});}s.warnTimer=setTimeout(()=>{if(active!==s)return;el('stop').disabled=true;log(s,'missing-end');status('Нет события end. Скопируйте журнал и перезагрузите тестовую страницу.');},5000);},5000);}
+el('start').onclick=()=>{
+ if(active||!SR)return;
+ const mode=el('mode').value;let rec;
+ try{rec=mode==='reuse'?(shared||(shared=new SR())):new SR();}catch(e){log(null,'constructor-error',{name:e.name});return;}
+ const s={id:++id,rec,finals:0,interim:0,stopping:false};active=s;lock(true);el('text').textContent='';status('Запускаю…');log(s,'request',{mode});
+ rec.lang='ru-RU';rec.continuous=false;rec.interimResults=true;rec.maxAlternatives=1;
+ for(const event of ['start','audiostart','speechstart','speechend','audioend'])rec['on'+event]=()=>{if(active!==s)return;log(s,event);if(event==='start')status('Слушаю. Скажите команду.');};
+ rec.onresult=e=>{if(active!==s)return;const text=[];let finals=0,interim=0;for(let i=0;i<e.results.length;i++){const r=e.results[i];text.push(r[0].transcript);if(r.isFinal)finals++;else interim++;}s.finals=finals;s.interim=interim;el('text').textContent=text.join(' ');log(s,'result',{finals,interim,characters:text.join(' ').length});};
+ rec.onerror=e=>{if(active!==s)return;log(s,'error',{code:e.error});status('Ошибка: '+e.error);};
+ rec.onend=()=>{if(active!==s)return;clearTimeout(s.timer);clearTimeout(s.abortTimer);clearTimeout(s.warnTimer);log(s,'end',{finals:s.finals,interim:s.interim});active=null;lock(false);status('Запись '+s.id+' завершена. Финальных результатов: '+s.finals+'. Можно нажать «Начать» снова.');};
+ s.timer=setTimeout(()=>{if(active===s){log(s,'time-limit');stop(s);}},25000);
+ try{log(s,'start-call');rec.start();}catch(e){clearTimeout(s.timer);log(s,'start-exception',{name:e.name});active=null;lock(false);status('Не удалось начать: '+e.name);}
+};
+el('stop').onclick=()=>{if(active)stop(active);};
+el('copy').onclick=async()=>{try{await navigator.clipboard.writeText(el('log').value);el('copy').textContent='Скопировано';}catch(e){el('log').focus();el('log').select();el('copy').textContent='Выделено — скопируйте вручную';}};
+window.addEventListener('pagehide',()=>{if(active)try{active.rec.abort();}catch(e){}});
+log(null,'page-ready');if(!SR){el('start').disabled=true;status('SpeechRecognition недоступен.');}
+</script></html>
