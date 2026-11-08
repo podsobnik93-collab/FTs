@@ -237,11 +237,22 @@ window.saveCurrentWorkout = saveCurrentWorkout;
 
 // ==================== HOME ====================
 function renderHome() {
-  profile = JSON.parse(localStorage.getItem('fs-profile') || 'null');
-  if (!profile) return;
-
-  document.getElementById('home-empty').style.display = 'none';
-  document.getElementById('home-content').style.display = 'block';
+  // Fit Sim v6: render an actionable empty state without changing stored data.
+  try { profile = JSON.parse(localStorage.getItem('fs-profile') || 'null'); }
+  catch (error) { console.warn('Cannot read profile', error); profile = null; }
+  const empty = document.getElementById('home-empty');
+  const content = document.getElementById('home-content');
+  if (!profile || typeof profile !== 'object' || Array.isArray(profile)) {
+    profile = null;
+    if (empty) {
+      empty.style.display = 'block';
+      empty.innerHTML = '<div class="card"><div class="card-header">Добро пожаловать в FitSim</div><div class="card-body"><p>Заполните профиль, чтобы начать работу. Существующие записи не удаляются.</p><button type="button" class="save-btn" onclick="goTo(&quot;profile&quot;,&quot;Профиль&quot;)">Создать профиль</button></div></div>';
+    }
+    if (content) content.style.display = 'none';
+    return;
+  }
+  if (empty) empty.style.display = 'none';
+  if (content) content.style.display = 'block';
 
   const lastWorkoutDiv = document.getElementById('last-workout-info');
   if (lastWorkoutDiv) {

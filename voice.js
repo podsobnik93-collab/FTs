@@ -2,7 +2,7 @@
 (function(){
  'use strict';
  if(window.fsVoice){console.warn('voice.js: speech engine already loaded');return;}
- const VERSION='voice-module-5';
+ const VERSION='voice-module-6';
  let active=null,pending=null,serial=0,lastNativeEnd=null,restartDelay=120,micCheck=null;
  const events=[];
  const notify=text=>{if(typeof toast==='function')toast(text);};
@@ -51,6 +51,25 @@
   s.received=true;s.emptyEnds=0;trace(s,'deliver',{characters:text.length});
   try{s.options.onText(text);}catch(e){console.error('Voice result callback',e);notify('Не удалось обработать голосовую команду. Повторите.');}
  }
+ function fillEditableDraft(s,text){
+  let id='',append=false;
+  if(s.key.startsWith('knowledge:'))id=s.key.slice(10);
+  else if(s.key.startsWith('input:'))id=s.key.slice(6);
+  else if(s.key==='ai-input'){id='ai-input';append=true;}
+  else if(s.key==='calendar-note'){id='cal-note-text';append=true;}
+  else if(s.key==='prep'){id='prep-voice-text';append=true;}
+  else if(s.key==='food-picker'&&typeof foodPickerTab!=='undefined'&&foodPickerTab!=='add')id='food-search';
+  const allowed=['enc-search','kb-food-search','builder-ex-search','add-ex-search','food-search','ai-input','cal-note-text','prep-voice-text'];
+  const input=allowed.includes(id)?document.getElementById(id):null;
+  if(!input||!input.isConnected||input.disabled||input.readOnly||!['INPUT','TEXTAREA'].includes(input.tagName)){
+   trace(s,'draft-not-applied',{characters:text.length});
+   notify('Предварительно распознано: «'+text+'». Повторите команду для подтверждения.');return;
+  }
+  input.value=append&&input.value.trim()?input.value.trimEnd()+' '+text:text;
+  input.dispatchEvent(new Event('input',{bubbles:true}));
+  trace(s,'draft-filled',{characters:text.length});
+  notify('Предварительный текст заполнен. Проверьте его перед сохранением.');
+ }
  function errorMessage(code){
   const messages={'not-allowed':'Нет доступа к микрофону. Проверьте разрешение для приложения или сайта.','service-not-allowed':'Браузер запретил распознавание речи.','audio-capture':'Микрофон недоступен или занят другим приложением.','network':'Ошибка сети при распознавании речи. Повторите запись.','language-not-supported':'Русский язык распознавания недоступен.','no-speech':'Не удалось расслышать речь. Нажмите микрофон и повторите.'};
   return messages[code]||'Не удалось включить распознавание речи. Нажмите микрофон ещё раз.';
@@ -71,10 +90,11 @@
   rec.onaudiostart=()=>{if(s.rec===rec&&!s.finished)trace(s,'audiostart');};
   rec.onaudioend=()=>{if(s.rec===rec&&!s.finished)trace(s,'audioend');};
   rec.onspeechstart=()=>{if(s.rec===rec&&!s.finished)trace(s,'speechstart');};
-  rec.onspeechend=()=>{if(s.rec!==rec||s.finished)return;trace(s,'speechend');if(!s.stopping&&!s.options.continuous)cancel(s,true);};
+  rec.onspeechend=()=>{if(s.rec!==rec||s.finished)return;trace(s,'speechend');};
   rec.onresult=e=>{
    if(active!==s||s.rec!==rec||s.finished||s.discard||(!s.options.continuous&&s.received))return;
    if(!valid(s)){cancel(s);return;}
+   clearTimeout(s.watchdog);s.watchdog=null;
    const finals=[],partial=[];
    for(let i=0;i<e.results.length;i++){
     const r=e.results[i],text=r?.[0]?.transcript||'';
@@ -83,7 +103,6 @@
    s.interim=partial.join(' ').trim();trace(s,'result',{finals:finals.length,interim:partial.length,resultIndex:e.resultIndex??0});
    if(s.interim){
     try{s.options.onPreview?.(s.interim);}catch(x){console.error('Voice preview callback',x);}
-    if(!s.options.continuous&&!s.stopping){clearTimeout(s.settle);s.settle=setTimeout(()=>{if(active===s&&!s.finished&&!s.stopping)cancel(s,true);},1800);}
    }
    if(finals.length){clearTimeout(s.settle);send(s,finals.join(' '));if(!s.options.continuous)cancel(s,true);}
   };
@@ -97,7 +116,7 @@
    if(active!==s||s.rec!==rec||s.finished)return;
    lastNativeEnd=Date.now();trace(s,'end');clearTimeout(s.watchdog);clearTimeout(s.release);clearTimeout(s.settle);detach(rec);s.rec=null;s.nativeStarted=false;
    if(s.options.interimFallback&&s.interim&&!s.error)send(s,s.interim);
-   if(!s.received&&!s.discard&&s.interim&&!s.error&&valid(s)){trace(s,'unfinalized');try{s.options.onUnfinalized?.(s.interim);}catch(x){console.error('Voice unfinished callback',x);}}
+   if((!s.received||s.options.continuous)&&!s.options.interimFallback&&!s.discard&&s.interim&&!s.error&&valid(s)){trace(s,'unfinalized');try{if(typeof s.options.onUnfinalized==='function')s.options.onUnfinalized(s.interim);else fillEditableDraft(s,s.interim);}catch(x){console.error('Voice unfinished callback',x);}}
    if(s.stopping||!valid(s)||s.error&&s.error!=='no-speech'){if(!s.received&&!s.discard&&!s.interim&&!s.error&&valid(s))notify(errorMessage('no-speech'));finish(s);return;}
    if(s.options.continuous&&Date.now()<s.endsAt){
     if(!s.hadFinal&&!s.interim)s.emptyEnds++;else s.emptyEnds=0;
