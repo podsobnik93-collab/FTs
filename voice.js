@@ -198,17 +198,17 @@ const WATER_DRINK_MAP = [
   { keys: ['сок', 'сока', 'натуральный сок'],              label: 'Сок натуральный' },
   { keys: ['зелёный чай', 'зеленый чай', 'зелёного'],     label: 'Зелёный чай' },
   { keys: ['чёрный чай', 'черный чай', 'чёрного чая'],    label: 'Чёрный чай' },
-  { keys: ['лимонад'],                                     label: 'Лимонад' },
-  { keys: ['какао'],                                       label: 'Какао' },
-  { keys: ['латте', 'лате'],                               label: 'Латте' },
-  { keys: ['капучино', 'капуччино'],                       label: 'Капучино' },
-  { keys: ['кофе', 'кофейку', 'кофея'],                   label: 'Кофе' },
+  { keys: ['лимонад'],                                      label: 'Лимонад' },
+  { keys: ['какао'],                                        label: 'Какао' },
+  { keys: ['латте', 'лате'],                                label: 'Латте' },
+  { keys: ['капучино', 'капуччино'],                        label: 'Капучино' },
+  { keys: ['кофе', 'кофейку', 'кофея'],                    label: 'Кофе' },
   { keys: ['газировка', 'газировки', 'газированн'],        label: 'Газировка' },
   { keys: ['кола', 'колы', 'кока-кола', 'пепси'],         label: 'Кола' },
-  { keys: ['квас', 'кваса'],                               label: 'Квас' },
+  { keys: ['квас', 'кваса'],                                label: 'Квас' },
   { keys: ['энергетик', 'энергетика', 'энерджи'],         label: 'Энергетик' },
   { keys: ['пиво', 'пива', 'пивка'],                      label: 'Пиво' },
-  { keys: ['чай'],                                         label: 'Чёрный чай' },
+  { keys: ['чай'],                                          label: 'Чёрный чай' },
   { keys: ['вода', 'воды', 'водички', 'водичку'],         label: 'Вода' },
 ];
 
@@ -245,7 +245,7 @@ const WATER_ML_MAP = {
   }
   if(ml===null){
    const nums={'ноль':0,'один':1,'одна':1,'одну':1,'два':2,'две':2,'три':3,'четыре':4,'пять':5,'шесть':6,'семь':7,'восемь':8,'девять':9,'десять':10,'одиннадцать':11,'двенадцать':12,'тринадцать':13,'четырнадцать':14,'пятнадцать':15,'шестнадцать':16,'семнадцать':17,'восемнадцать':18,'девятнадцать':19,'двадцать':20,'тридцать':30,'сорок':40,'пятьдесят':50,'шестьдесят':60,'семьдесят':70,'восемьдесят':80,'девяносто':90,'сто':100,'двести':200,'триста':300,'четыреста':400,'пятьсот':500,'шестьсот':600,'семьсот':700,'восемьсот':800,'девятьсот':900};
-   let n=0,found=false;for(const word of text.split(/[^а-я]+/u)){if(Object.prototype.hasOwnProperty.call(nums,word)){n+=nums[word];found=true;}}if(found)ml=n;
+   let n=0,found=false;for(const word of text.split(/[^а-я]+/u)){if(Object.prototype.hasOwnProperty.call(nums,word)){n=nums[word];found=true;}}if(found)ml=n;
   }
   return {drink:drink?.label||null,ml:ml===null?null:Math.round(ml)};
  }
@@ -304,6 +304,36 @@ const WATER_ML_MAP = {
   document.addEventListener('fsvoice:mic-check',e=>show(e.detail));
   button.onclick=async()=>{button.disabled=true;status.textContent='Проверяю доступ. При необходимости ответьте на запрос разрешения…';show(await window.fsVoice.checkMicrophone());};
   panel.appendChild(button);panel.appendChild(status);
+ }
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',install,{once:true});else install();
+})();
+
+/* Measurements history collapsible: hide by default, toggle on title click. */
+(function(){
+ 'use strict';
+ function install(){
+  const section=document.querySelector('.diary-measurements-history');
+  const body=document.getElementById('body-log');
+  if(!section||!body||section.dataset.historyCollapseInstalled==='true')return;
+  section.dataset.historyCollapseInstalled='true';
+  const title=section.querySelector('.diary-measurements-history-title');
+  if(!title)return;
+  const button=document.createElement('button');
+  button.type='button';
+  button.className='diary-measurements-history-toggle';
+  button.setAttribute('aria-expanded','false');
+  button.setAttribute('aria-controls','body-log');
+  button.innerHTML='<span>История замеров</span><span class="diary-measurements-history-arrow" aria-hidden="true">›</span>';
+  title.replaceWith(button);
+  body.hidden=true;
+  button.addEventListener('click',()=>{
+   const open=button.getAttribute('aria-expanded')==='true';
+   button.setAttribute('aria-expanded',String(!open));
+   body.hidden=open;
+  });
+  const style=document.createElement('style');
+  style.textContent='.diary-measurements-history-toggle{width:100%;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 16px 10px;background:none;border:0;color:var(--text-light);font:inherit;font-size:12px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;cursor:pointer}.diary-measurements-history-arrow{transition:transform .2s ease}.diary-measurements-history-toggle[aria-expanded="true"] .diary-measurements-history-arrow{transform:rotate(90deg)}.diary-measurements-history-body{border-top:1px solid var(--border)}';
+  document.head.appendChild(style);
  }
  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',install,{once:true});else install();
 })();
